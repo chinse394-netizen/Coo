@@ -189,17 +189,19 @@ end
 function module.SolveTrajectory(origin, projectileSpeed, gravity, targetPos, targetVelocity, playerGravity, playerHeight, playerJump, params)
 	local disp = targetPos - origin
 	local p, q, r = targetVelocity.X, targetVelocity.Y, targetVelocity.Z
+	-- Replication can report zero vertical velocity at the start of a build step.
+	if playerJump and q <= 2 then
+		q = playerJump
+	end
 	local h, j, k = disp.X, disp.Y, disp.Z
 	local l = -.5 * gravity
 	--attemped gravity calculation, may return to it in the future.
 	if math.abs(q) > 0.01 and playerGravity and playerGravity > 0 then
 		local estTime = (disp.Magnitude / projectileSpeed)
-		local origq = q
-		local origj = j
 		for i = 1, 100 do
-			q -= (.5 * playerGravity) * estTime
 			local velo = targetVelocity * 0.016
-			local ray = workspace.Raycast(workspace, Vector3.new(targetPos.X, targetPos.Y, targetPos.Z), Vector3.new(velo.X, (q * estTime) - playerHeight, velo.Z), params)
+			local projectedY = q - (.5 * playerGravity) * estTime
+			local ray = workspace.Raycast(workspace, Vector3.new(targetPos.X, targetPos.Y, targetPos.Z), Vector3.new(velo.X, (projectedY * estTime) - playerHeight, velo.Z), params)
 			if ray then
 				local newTarget = ray.Position + Vector3.new(0, playerHeight, 0)
 				estTime -= math.sqrt(((targetPos - newTarget).Magnitude * 2) / playerGravity)
