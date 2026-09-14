@@ -467,7 +467,7 @@ local kitorder = {
 
 local sortmethods = {
 	Damage = function(a, b)
-		return (tonumber(a.Entity.Character:GetAttribute('LastDamageTakenTime')) or 0) < (tonumber(b.Entity.Character:GetAttribute('LastDamageTakenTime')) or 0)
+		return a.Entity.Character:GetAttribute('LastDamageTakenTime') < b.Entity.Character:GetAttribute('LastDamageTakenTime')
 	end,
 	Threat = function(a, b)
 		return getStrength(a.Entity) > getStrength(b.Entity)
@@ -2811,7 +2811,6 @@ run(function()
 	})
 end)
 	
-
 run(function()
     local Killaura
     local Continue
@@ -3571,7 +3570,6 @@ run(function()
         Tooltip = 'Only attacks while swinging manually'
     })
 end)
-
 
 																																				
 local Attacking
@@ -22743,43 +22741,4 @@ run(function()
         Tooltip = 'Plays animation with hit attempt'
     })
  
-end)
-
-run(function()
-	local FastPickup
-	local FastPickupDelay
-	local PickupRemote = replicatedStorage:WaitForChild('rbxts_include'):WaitForChild('node_modules'):WaitForChild('@rbxts'):WaitForChild('net'):WaitForChild('out'):WaitForChild('_NetManaged'):WaitForChild('PickupItemDrop')
-
-	FastPickup = vape.Categories.Blatant:CreateModule({
-		Name = 'FastPickup',
-		Tooltip = 'picks up items fast asl',
-		Function = function(callback)
-			if callback then
-				FastPickup:Clean(task.spawn(function()
-					while FastPickup.Enabled do
-						if entitylib.isAlive then
-							for _, drop in pairs(workspace:WaitForChild('ItemDropsCache'):GetChildren()) do
-								task.spawn(function()
-									task.wait(FastPickupDelay.Value)
-									pcall(function()
-										PickupRemote:InvokeServer({ itemDrop = drop })
-									end)
-								end)
-							end
-						end
-						task.wait(0.05)
-					end
-				end))
-			end
-		end,
-	})
-
-	FastPickupDelay = FastPickup:CreateSlider({
-		Name = 'Delay',
-		Min = 0,
-		Max = 0.5,
-		Default = 0,
-		Decimal = 100,
-		Suffix = 's',
-	})
 end)
