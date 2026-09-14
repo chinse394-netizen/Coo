@@ -5259,28 +5259,6 @@ run(function()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
 	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
 	local old
-	local targetSamples = {}
-
-	local function getPredictedVelocity(entity, part)
-		local now = tick()
-		local reported = part.AssemblyLinearVelocity or part.Velocity or Vector3.zero
-		local sample = targetSamples[entity]
-		targetSamples[entity] = {Position = part.Position, Time = now}
-
-		if not sample then
-			return reported
-		end
-
-		local dt = now - sample.Time
-		if dt <= 0 or dt > 0.25 then
-			return reported
-		end
-
-		local measured = (part.Position - sample.Position) / dt
-		-- Favor live velocity for normal movement, while incorporating the position
-		-- delta that catches short vertical builder/jump transitions.
-		return reported:Lerp(measured, 0.35)
-	end
 	
 	local ProjectileAimbot = vape.Categories.Blatant:CreateModule({
 		Name = 'ProjectileAimbot',
@@ -5336,24 +5314,9 @@ run(function()
 						if not targetPart then
 							return old(...)
 						end
-						local targetVelocity = getPredictedVelocity(plr, targetPart)
-						local recentJump = plr.JumpTick and (tick() - plr.JumpTick) <= 0.2
+						local targetVelocity = targetPart.AssemblyLinearVelocity or targetPart.Velocity or Vector3.zero
 						local newlook = CFrame.new(offsetpos, targetPart.Position) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
-						local solved, calc = pcall(
-							prediction.SolveTrajectory,
-							newlook.p,
-							projSpeed,
-							gravity,
-							targetPart.Position,
-							projmeta.projectile == 'telepearl' and Vector3.zero or targetVelocity * Prediction.Value,
-							playerGravity,
-							plr.HipHeight,
-							recentJump and 42.6 or nil,
-							rayCheck
-						)
-						if not solved then
-							return old(...)
-						end
+						local calc = prediction.SolveTrajectory(newlook.p, projSpeed, gravity, targetPart.Position, projmeta.projectile == 'telepearl' and Vector3.zero or targetVelocity * Prediction.Value, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
 						if calc then
 							targetinfo.Targets[plr] = tick() + 1
 							return {
