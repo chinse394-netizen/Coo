@@ -221,15 +221,15 @@ function module.SolveTrajectory(origin, projectileSpeed, gravity, targetPos, tar
 		j*j + h*h + k*k
 	)
 	if solutions then
-		local posRoots = table.create(2)
-		for _, v in solutions do --filter out the negative roots
-			if v > 0 then
-				table.insert(posRoots, v)
+		-- Quartic roots are not returned in flight-time order.  Use the earliest
+		-- positive intercept so projectile aim chooses the direct trajectory.
+		local t
+		for _, v in solutions do
+			if v > eps and (not t or v < t) then
+				t = v
 			end
 		end
-		posRoots[1] = posRoots[1]
-		if posRoots[1] then
-			local t = posRoots[1]
+		if t then
 			local d = (h + p*t)/t
 			local e = (j + q*t - l*t*t)/t
 			local f = (k + r*t)/t
