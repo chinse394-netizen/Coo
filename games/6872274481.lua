@@ -2844,27 +2844,18 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
+	-- 36 requests per ten seconds triggers the game's intermittent one-second
+	-- combat throttle.  Keep the sender at the highest stable rate instead.
 	local ATTACKS_PER_TEN_SECONDS = 35
 	local AttackRemote = {FireServer = function() end}
-	local nextRemoteRefresh = 0
-	local function getAttackRemote()
-		-- The game's remote can be replaced after a respawn or a controller reload.
-		-- Keep the last known-good instance, but refresh it periodically so one stale
-		-- reference cannot make the aura appear to stop.
-		if tick() >= nextRemoteRefresh then
-			nextRemoteRefresh = tick() + 2
-			local ok, remote = pcall(function()
-				return bedwars.Client:Get(remotes.AttackEntity).instance
-			end)
-			if ok and remote then
-				AttackRemote = remote
-			end
+	local function refreshAttackRemote()
+		local ok, remote = pcall(function()
+			return bedwars.Client:Get(remotes.AttackEntity).instance
+		end)
+		if ok and remote then
+			AttackRemote = remote
 		end
-		return AttackRemote
 	end
-	task.spawn(function()
-		getAttackRemote()
-	end)
 
 	local function getAttackData()
 		if Mouse.Enabled then
@@ -2896,6 +2887,16 @@ run(function()
 		Name = 'Killaura',
 		Function = function(callback)
 			if callback then
+				-- Keep controller refreshes out of the attack loop so they cannot stall a hit.
+				refreshAttackRemote()
+				task.spawn(function()
+					repeat
+						task.wait(2)
+						if Killaura.Enabled then
+							refreshAttackRemote()
+						end
+					until not Killaura.Enabled
+				end)
 				if inputService.TouchEnabled then
 					pcall(function()
 						lplr.PlayerGui.MobileUI['2'].Visible = Limit.Enabled
@@ -3033,27 +3034,29 @@ run(function()
 									local now = tick()
 									if actualRoot and now >= nextAttack then
 										local attackInterval = 10 / ATTACKS_PER_TEN_SECONDS
-										nextAttack = now + attackInterval
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 										local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
-										bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-										store.attackReach = (delta.Magnitude * 100) // 1 / 100
-										store.attackReachUpdate = tick() + 1
-
-										local remote = getAttackRemote()
-										remote:FireServer({
-											weapon = sword.tool,
-											chargedAttack = {chargeRatio = 0},
-											entityInstance = v.Character,
-											validate = {
-												raycast = {
-													cameraPosition = {value = pos},
-													cursorDirection = {value = dir}
-												},
-												targetPosition = {value = actualRoot.Position},
-												selfPosition = {value = pos}
-											}
-										})
+										local sent = pcall(function()
+											AttackRemote:FireServer({
+												weapon = sword.tool,
+												chargedAttack = {chargeRatio = 0},
+												entityInstance = v.Character,
+												validate = {
+													raycast = {
+														cameraPosition = {value = pos},
+														cursorDirection = {value = dir}
+													},
+													targetPosition = {value = actualRoot.Position},
+													selfPosition = {value = pos}
+												}
+											})
+										end)
+										if sent then
+											nextAttack = now + attackInterval
+											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
+											store.attackReach = (delta.Magnitude * 100) // 1 / 100
+											store.attackReachUpdate = tick() + 1
+										end
 									end
 								end
 							end
@@ -3084,10 +3087,9 @@ run(function()
 						store.KillauraTarget = nil
 					end
 
-					-- Keep the attack loop at the selected cadence even while targets are
-					-- present.  The old target-count delay could override Update rate and
-					-- leave sword swings waiting long enough to be dropped.
-					task.wait(1 / math.clamp(UpdateRate.Value, 1, 120))
+					-- Never allow a saved low update-rate value to turn target scans into
+					-- one-second gaps.  Attack timing remains controlled separately above.
+					task.wait(1 / math.clamp(UpdateRate.Value, 60, 120))
 				until not Killaura.Enabled
 			else
 				-- Stop the running attack/animation tasks before restoring normal input.
@@ -3162,9 +3164,9 @@ run(function()
 	})
 	UpdateRate = Killaura:CreateSlider({
 		Name = 'Update rate',
-		Min = 1,
+		Min = 60,
 		Max = 120,
-		Default = 60,
+		Default = 120,
 		Suffix = 'hz'
 	})
 	AttackRate = Killaura:CreateSlider({
@@ -5252,10 +5254,33 @@ run(function()
 	local Targets
 	local FOV
 	local OtherProjectiles
+	local Prediction
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
 	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
 	local old
+	local targetSamples = {}
+
+	local function getPredictedVelocity(entity, part)
+		local now = tick()
+		local reported = part.AssemblyLinearVelocity or part.Velocity or Vector3.zero
+		local sample = targetSamples[entity]
+		targetSamples[entity] = {Position = part.Position, Time = now}
+
+		if not sample then
+			return reported
+		end
+
+		local dt = now - sample.Time
+		if dt <= 0 or dt > 0.25 then
+			return reported
+		end
+
+		local measured = (part.Position - sample.Position) / dt
+		-- Favor live velocity for normal movement, while incorporating the position
+		-- delta that catches short vertical builder/jump transitions.
+		return reported:Lerp(measured, 0.35)
+	end
 	
 	local ProjectileAimbot = vape.Categories.Blatant:CreateModule({
 		Name = 'ProjectileAimbot',
@@ -5295,7 +5320,7 @@ run(function()
 							playerGravity = (workspace.Gravity * (1 - ((balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))))
 						end
 	
-						if plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
+						if plr.Character.PrimaryPart and plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
 							playerGravity = 6
 						end
 	
@@ -5307,8 +5332,14 @@ run(function()
 							end
 						end
 	
-						local newlook = CFrame.new(offsetpos, plr[TargetPart.Value].Position) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
-						local calc = prediction.SolveTrajectory(newlook.p, projSpeed, gravity, plr[TargetPart.Value].Position, projmeta.projectile == 'telepearl' and Vector3.zero or plr[TargetPart.Value].Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
+						local targetPart = plr[TargetPart.Value] or plr.RootPart
+						if not targetPart then
+							return old(...)
+						end
+						local targetVelocity = getPredictedVelocity(plr, targetPart)
+						local recentJump = plr.JumpTick and (tick() - plr.JumpTick) <= 0.2
+						local newlook = CFrame.new(offsetpos, targetPart.Position) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
+						local calc = prediction.SolveTrajectory(newlook.p, projSpeed, gravity, targetPart.Position, projmeta.projectile == 'telepearl' and Vector3.zero or targetVelocity * Prediction.Value, playerGravity, plr.HipHeight, recentJump and 42.6 or nil, rayCheck)
 						if calc then
 							targetinfo.Targets[plr] = tick() + 1
 							return {
@@ -5342,6 +5373,14 @@ run(function()
 		Min = 1,
 		Max = 1000,
 		Default = 1000
+	})
+	Prediction = ProjectileAimbot:CreateSlider({
+		Name = 'Prediction',
+		Min = 0,
+		Max = 2,
+		Default = 1,
+		Decimal = 100,
+		Suffix = 'x'
 	})
 	OtherProjectiles = ProjectileAimbot:CreateToggle({
 		Name = 'Other Projectiles',
