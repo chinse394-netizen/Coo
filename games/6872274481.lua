@@ -3084,10 +3084,9 @@ run(function()
 						store.KillauraTarget = nil
 					end
 
-					-- Keep the attack loop at the selected cadence even while targets are
-					-- present.  The old target-count delay could override Update rate and
-					-- leave sword swings waiting long enough to be dropped.
-					task.wait(1 / math.clamp(UpdateRate.Value, 1, 120))
+					-- Never allow a saved low update-rate value to turn target scans into
+					-- one-second gaps.  Attack timing remains controlled separately above.
+					task.wait(1 / math.clamp(UpdateRate.Value, 60, 120))
 				until not Killaura.Enabled
 			else
 				-- Stop the running attack/animation tasks before restoring normal input.
@@ -3162,9 +3161,9 @@ run(function()
 	})
 	UpdateRate = Killaura:CreateSlider({
 		Name = 'Update rate',
-		Min = 1,
+		Min = 60,
 		Max = 120,
-		Default = 60,
+		Default = 120,
 		Suffix = 'hz'
 	})
 	AttackRate = Killaura:CreateSlider({
