@@ -2844,7 +2844,7 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local ATTACKS_PER_TEN_SECONDS = 35
+	local ATTACKS_PER_TEN_SECONDS = 36
 	local AttackRemote = {FireServer = function() end}
 	local function refreshAttackRemote()
 		local ok, remote = pcall(function()
@@ -3169,9 +3169,9 @@ run(function()
 	})
 	AttackRate = Killaura:CreateSlider({
 		Name = 'Attack attempts per 10s',
-		Min = 35,
-		Max = 35,
-		Default = 35,
+		Min = 36,
+		Max = 36,
+		Default = 36,
 		Suffix = ' hits'
 	})
 	MaxTargets = Killaura:CreateSlider({
