@@ -2846,25 +2846,14 @@ run(function()
 	local animationHooksInstalled = false
 	local ATTACKS_PER_TEN_SECONDS = 35
 	local AttackRemote = {FireServer = function() end}
-	local nextRemoteRefresh = 0
-	local function getAttackRemote()
-		-- The game's remote can be replaced after a respawn or a controller reload.
-		-- Keep the last known-good instance, but refresh it periodically so one stale
-		-- reference cannot make the aura appear to stop.
-		if tick() >= nextRemoteRefresh then
-			nextRemoteRefresh = tick() + 2
-			local ok, remote = pcall(function()
-				return bedwars.Client:Get(remotes.AttackEntity).instance
-			end)
-			if ok and remote then
-				AttackRemote = remote
-			end
+	local function refreshAttackRemote()
+		local ok, remote = pcall(function()
+			return bedwars.Client:Get(remotes.AttackEntity).instance
+		end)
+		if ok and remote then
+			AttackRemote = remote
 		end
-		return AttackRemote
 	end
-	task.spawn(function()
-		getAttackRemote()
-	end)
 
 	local function getAttackData()
 		if Mouse.Enabled then
@@ -2896,6 +2885,16 @@ run(function()
 		Name = 'Killaura',
 		Function = function(callback)
 			if callback then
+				-- Keep controller refreshes out of the attack loop so they cannot stall a hit.
+				refreshAttackRemote()
+				task.spawn(function()
+					repeat
+						task.wait(2)
+						if Killaura.Enabled then
+							refreshAttackRemote()
+						end
+					until not Killaura.Enabled
+				end)
 				if inputService.TouchEnabled then
 					pcall(function()
 						lplr.PlayerGui.MobileUI['2'].Visible = Limit.Enabled
