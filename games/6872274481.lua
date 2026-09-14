@@ -5254,6 +5254,7 @@ run(function()
 	local Targets
 	local FOV
 	local OtherProjectiles
+	local Prediction
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
 	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
@@ -5297,7 +5298,7 @@ run(function()
 							playerGravity = (workspace.Gravity * (1 - ((balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))))
 						end
 	
-						if plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
+						if plr.Character.PrimaryPart and plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
 							playerGravity = 6
 						end
 	
@@ -5309,8 +5310,13 @@ run(function()
 							end
 						end
 	
-						local newlook = CFrame.new(offsetpos, plr[TargetPart.Value].Position) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
-						local calc = prediction.SolveTrajectory(newlook.p, projSpeed, gravity, plr[TargetPart.Value].Position, projmeta.projectile == 'telepearl' and Vector3.zero or plr[TargetPart.Value].Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
+						local targetPart = plr[TargetPart.Value] or plr.RootPart
+						if not targetPart then
+							return old(...)
+						end
+						local targetVelocity = targetPart.AssemblyLinearVelocity or targetPart.Velocity or Vector3.zero
+						local newlook = CFrame.new(offsetpos, targetPart.Position) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
+						local calc = prediction.SolveTrajectory(newlook.p, projSpeed, gravity, targetPart.Position, projmeta.projectile == 'telepearl' and Vector3.zero or targetVelocity * Prediction.Value, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
 						if calc then
 							targetinfo.Targets[plr] = tick() + 1
 							return {
@@ -5344,6 +5350,14 @@ run(function()
 		Min = 1,
 		Max = 1000,
 		Default = 1000
+	})
+	Prediction = ProjectileAimbot:CreateSlider({
+		Name = 'Prediction',
+		Min = 0,
+		Max = 2,
+		Default = 1,
+		Decimal = 100,
+		Suffix = 'x'
 	})
 	OtherProjectiles = ProjectileAimbot:CreateToggle({
 		Name = 'Other Projectiles',
