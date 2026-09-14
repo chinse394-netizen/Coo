@@ -2846,14 +2846,25 @@ run(function()
 	local animationHooksInstalled = false
 	local ATTACKS_PER_TEN_SECONDS = 35
 	local AttackRemote = {FireServer = function() end}
-	local function refreshAttackRemote()
-		local ok, remote = pcall(function()
-			return bedwars.Client:Get(remotes.AttackEntity).instance
-		end)
-		if ok and remote then
-			AttackRemote = remote
+	local nextRemoteRefresh = 0
+	local function getAttackRemote()
+		-- The game's remote can be replaced after a respawn or a controller reload.
+		-- Keep the last known-good instance, but refresh it periodically so one stale
+		-- reference cannot make the aura appear to stop.
+		if tick() >= nextRemoteRefresh then
+			nextRemoteRefresh = tick() + 2
+			local ok, remote = pcall(function()
+				return bedwars.Client:Get(remotes.AttackEntity).instance
+			end)
+			if ok and remote then
+				AttackRemote = remote
+			end
 		end
+		return AttackRemote
 	end
+	task.spawn(function()
+		getAttackRemote()
+	end)
 
 	local function getAttackData()
 		if Mouse.Enabled then
@@ -2885,16 +2896,6 @@ run(function()
 		Name = 'Killaura',
 		Function = function(callback)
 			if callback then
-				-- Keep controller refreshes out of the attack loop so they cannot stall a hit.
-				refreshAttackRemote()
-				task.spawn(function()
-					repeat
-						task.wait(2)
-						if Killaura.Enabled then
-							refreshAttackRemote()
-						end
-					until not Killaura.Enabled
-				end)
 				if inputService.TouchEnabled then
 					pcall(function()
 						lplr.PlayerGui.MobileUI['2'].Visible = Limit.Enabled
@@ -3083,9 +3084,10 @@ run(function()
 						store.KillauraTarget = nil
 					end
 
-					-- Never allow a saved low update-rate value to turn target scans into
-					-- one-second gaps.  Attack timing remains controlled separately above.
-					task.wait(1 / math.clamp(UpdateRate.Value, 60, 120))
+					-- Keep the attack loop at the selected cadence even while targets are
+					-- present.  The old target-count delay could override Update rate and
+					-- leave sword swings waiting long enough to be dropped.
+					task.wait(1 / math.clamp(UpdateRate.Value, 1, 120))
 				until not Killaura.Enabled
 			else
 				-- Stop the running attack/animation tasks before restoring normal input.
@@ -3160,9 +3162,9 @@ run(function()
 	})
 	UpdateRate = Killaura:CreateSlider({
 		Name = 'Update rate',
-		Min = 60,
+		Min = 1,
 		Max = 120,
-		Default = 120,
+		Default = 60,
 		Suffix = 'hz'
 	})
 	AttackRate = Killaura:CreateSlider({
