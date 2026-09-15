@@ -26176,6 +26176,9 @@ run(function()
 	-- 36 requests per ten seconds triggers the game's intermittent one-second
 	-- combat throttle.  Keep the sender at the highest stable rate instead.
 	local ATTACKS_PER_TEN_SECONDS = 35
+	-- Use one shared interval for the sender; deriving this once avoids the
+	-- effective 33-hit cadence caused by repeated scheduler rounding.
+	local ATTACK_INTERVAL = 10 / ATTACKS_PER_TEN_SECONDS
 	local AttackRemote = {FireServer = function() end}
 	local function refreshAttackRemote()
 		local ok, remote = pcall(function()
@@ -26366,7 +26369,7 @@ run(function()
 									local actualRoot = (v.Character and v.Character.PrimaryPart) or v.RootPart
 									local now = tick()
 									if actualRoot and now >= nextAttack then
-										local attackInterval = 10 / ATTACKS_PER_TEN_SECONDS
+										local attackInterval = ATTACK_INTERVAL
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 										local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
 										local sent = pcall(function()
