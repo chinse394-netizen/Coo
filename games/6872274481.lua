@@ -26299,6 +26299,7 @@ run(function()
 				-- Schedule attack attempts independently from target scanning.  This keeps
 				-- the requested rate stable instead of letting frame/update timing drift it.
 				local nextAttack = tick()
+				local lastTool
 				repeat
 					local attacked = {}
 					local ok = pcall(function()
@@ -26318,7 +26319,10 @@ run(function()
 							})
 
 							if #plrs > 0 then
-								switchItem(sword.tool, 0)
+								if lastTool ~= sword.tool then
+									switchItem(sword.tool, 0)
+									lastTool = sword.tool
+								end
 								local selfpos = root.Position
 								local flatFacing = root.CFrame.LookVector * Vector3.new(1, 0, 1)
 								-- Looking up/down shortens the projected look vector.  Normalizing it
