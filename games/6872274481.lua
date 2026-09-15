@@ -26370,9 +26370,13 @@ run(function()
 					local now = tick()
 					if actualRoot and now >= nextAttack then
 						local attackInterval = ATTACK_INTERVAL
-						-- Advance before dispatch so an expensive send cannot stall target
-						-- scanning or bunch attacks after a scheduler hitch.
-						nextAttack = now + attackInterval
+						-- Keep the cadence anchored to its previous deadline instead of the
+						-- current scan frame.  Scheduling from `now` loses one attempt every
+						-- few frames, which is why the 35 setting only produced ~29 hits.
+						nextAttack = nextAttack + attackInterval
+						if nextAttack <= now then
+							nextAttack = now + attackInterval
+						end
 						local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 						local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
 						-- Snapshot every value used by the deferred call.  `task.spawn` can
