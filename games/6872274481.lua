@@ -26379,12 +26379,14 @@ run(function()
 												}
 											})
 										end)
-										if sent then
-											nextAttack = now + attackInterval
-											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-											store.attackReach = (delta.Magnitude * 100) // 1 / 100
-											store.attackReachUpdate = tick() + 1
-										end
+						if sent then
+							bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
+							store.attackReach = (delta.Magnitude * 100) // 1 / 100
+							store.attackReachUpdate = tick() + 1
+						else
+							refreshAttackRemote()
+						end
+						nextAttack = now + attackInterval
 									end
 								end
 							end
