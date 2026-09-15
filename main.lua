@@ -94,15 +94,12 @@ local gui = readfile('Coo/profiles/gui.txt')
 if not isfolder('Coo/assets/'..gui) then
 	makefolder('Coo/assets/'..gui)
 end
-if setthreadidentity then setthreadidentity(8) end
 vape = loadstring(downloadFile('Coo/guis/'..gui..'.lua'), 'gui')()
 shared.vape = vape
 
 if not shared.VapeIndependent then
-	if setthreadidentity then setthreadidentity(8) end
 	loadstring(downloadFile('Coo/games/universal.lua'), 'universal')()
 	if isfile('Coo/games/'..game.PlaceId..'.lua') then
-		if setthreadidentity then setthreadidentity(8) end
 		loadstring(readfile('Coo/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId))(...)
 	else
 		if not shared.VapeDeveloper then
@@ -110,19 +107,16 @@ if not shared.VapeIndependent then
 				return game:HttpGet('https://raw.githubusercontent.com/chinse394-netizen/Coo/'..readfile('Coo/profiles/commit.txt')..'/games/'..game.PlaceId..'.lua', true)
 			end)
 			if suc and res ~= '404: Not Found' then
-				if setthreadidentity then setthreadidentity(8) end
 				loadstring(downloadFile('Coo/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId))(...)
 			end
 		end
 	end
 
 	-- Load game-specific category extensions before final GUI initialization.
-	if setthreadidentity then setthreadidentity(8) end
 	pcall(function()
 		loadstring(downloadFile('Coo/libraries/kits.lua'), 'kits')()
 	end)
 
-	if setthreadidentity then setthreadidentity(8) end
 	finishLoading()
 else
 	vape.Init = finishLoading
