@@ -26173,11 +26173,7 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	-- 36 requests per ten seconds triggers the game's intermittent one-second
-	-- combat throttle.  Keep the sender at the highest stable rate instead.
 	local ATTACKS_PER_TEN_SECONDS = 35
-	-- Use one shared interval for the sender; deriving this once avoids the
-	-- effective 33-hit cadence caused by repeated scheduler rounding.
 	local ATTACK_INTERVAL = 10 / ATTACKS_PER_TEN_SECONDS
 	local AttackRemote = {FireServer = function() end}
 	local function refreshAttackRemote()
@@ -26219,7 +26215,6 @@ run(function()
 		Name = 'KillauraL',
 		Function = function(callback)
 			if callback then
-				-- Keep controller refreshes out of the attack loop so they cannot stall a hit.
 				refreshAttackRemote()
 				task.spawn(function()
 					repeat
@@ -26250,8 +26245,6 @@ run(function()
 							}
 						}
 					}
-					-- Save the live controller upvalues.  Restoring to bedwars.Knit is not
-					-- reliable: the game can use a different controller after an update.
 					swordEffectFunction = oldSwing or bedwars.SwordController.playSwordEffect
 					scytheAnimationFunction = bedwars.ScytheController.playLocalAnimation
 					local _, currentSwordEffectController = debug.getupvalue(swordEffectFunction, 6)
@@ -26300,9 +26293,7 @@ run(function()
 					end)
 				end
 
-				-- Schedule attack attempts independently from target scanning.  This keeps
-				-- the requested rate stable instead of letting frame/update timing drift it.
-				local nextAttack = tick()
+				local nextAttack = 0
 				local lastTool
 				repeat
 					local attacked = {}
@@ -26329,8 +26320,6 @@ run(function()
 								end
 								local selfpos = root.Position
 								local flatFacing = root.CFrame.LookVector * Vector3.new(1, 0, 1)
-								-- Looking up/down shortens the projected look vector.  Normalizing it
-								-- avoids falsely failing the angle check and dropping nearby targets.
 								local localfacing = flatFacing.Magnitude > 0 and flatFacing.Unit or nil
 
 								for _, v in plrs do
@@ -26367,45 +26356,30 @@ run(function()
 									if delta.Magnitude > AttackRange.Value then continue end
 
 									local actualRoot = (v.Character and v.Character.PrimaryPart) or v.RootPart
-					local now = tick()
-					if actualRoot and now >= nextAttack then
-						local attackInterval = ATTACK_INTERVAL
-						-- Keep the cadence anchored to its previous deadline instead of the
-						-- current scan frame.  Scheduling from `now` loses one attempt every
-						-- few frames, which is why the 35 setting only produced ~29 hits.
-						nextAttack = nextAttack + attackInterval
-						if nextAttack <= now then
-							nextAttack = now + attackInterval
-						end
-						local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
-						local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
-						-- Snapshot every value used by the deferred call.  `task.spawn` can
-						-- overlap sends under load; `task.defer` runs after this scan pass,
-						-- keeping one stable cadence instead of periodic slowdowns.
-						local remote = AttackRemote
-						local weapon = sword.tool
-						local targetCharacter = v.Character
-						local targetPosition = actualRoot.Position
-						task.defer(function()
-							pcall(function()
-								remote:FireServer({
-								weapon = weapon,
-								chargedAttack = {chargeRatio = 0},
-								entityInstance = targetCharacter,
+									local now = tick()
+									if actualRoot and now >= nextAttack then
+										local late = now - nextAttack
+										nextAttack = (nextAttack == 0 or late > ATTACK_INTERVAL) and (now + ATTACK_INTERVAL) or (nextAttack + ATTACK_INTERVAL)
+										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
+										local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
+										pcall(function()
+											AttackRemote:FireServer({
+												weapon = sword.tool,
+												chargedAttack = {chargeRatio = 0},
+												entityInstance = v.Character,
 												validate = {
 													raycast = {
 														cameraPosition = {value = pos},
 														cursorDirection = {value = dir}
 													},
-											targetPosition = {value = targetPosition},
+													targetPosition = {value = actualRoot.Position},
 													selfPosition = {value = pos}
 												}
-								})
-							end)
-						end)
-							bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-							store.attackReach = (delta.Magnitude * 100) // 1 / 100
-							store.attackReachUpdate = tick() + 1
+											})
+										end)
+										bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
+										store.attackReach = (delta.Magnitude * 100) // 1 / 100
+										store.attackReachUpdate = tick() + 1
 									end
 								end
 							end
@@ -26436,12 +26410,9 @@ run(function()
 						store.KillauraTarget = nil
 					end
 
-					-- Never allow a saved low update-rate value to turn target scans into
-					-- one-second gaps.  Attack timing remains controlled separately above.
 					task.wait(1 / math.clamp(UpdateRate.Value, 60, 120))
 				until not Killaura.Enabled
 			else
-				-- Stop the running attack/animation tasks before restoring normal input.
 				Attacking = false
 				if AnimTween then
 					AnimTween:Cancel()
@@ -26721,8 +26692,6 @@ run(function()
 		Tooltip = 'Only attacks while swinging manually'
 	})
 
-	-- Enable KillauraL after all of its controls are ready.  The other aura
-	-- implementation remains untouched and disabled, preventing competing loops.
 	task.defer(function()
 		if not Killaura.Enabled then
 			Killaura:Toggle()
