@@ -26387,10 +26387,16 @@ run(function()
 							bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
 							store.attackReach = (delta.Magnitude * 100) // 1 / 100
 							store.attackReachUpdate = tick() + 1
+							-- Advance from the previous deadline so frame/task jitter does not
+							-- slowly reduce the number of successful hits in a 10-second window.
+							nextAttack = nextAttack + attackInterval
+							if nextAttack <= now then nextAttack = now + attackInterval end
 						else
 							refreshAttackRemote()
+							-- A failed remote call must not consume a full attack slot.
+							-- Retry shortly, then resume the fixed 35-hit cadence.
+							nextAttack = now + 0.03
 						end
-						nextAttack = now + attackInterval
 									end
 								end
 							end
