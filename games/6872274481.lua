@@ -1,10 +1,3 @@
--- Restore Plugin-level thread identity — try all executor variants
-if setthreadidentity then pcall(setthreadidentity, 8)
-elseif setidentity then pcall(setidentity, 8)
-elseif syn and syn.set_thread_identity then pcall(syn.set_thread_identity, 8)
-elseif getgenv and getgenv().setthreadidentity then pcall(getgenv().setthreadidentity, 8)
-end
-
 local canDebug = true
 local VERSION = 42
 local run = function(func)
