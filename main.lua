@@ -32,7 +32,7 @@ local playersService = cloneref(game:GetService('Players'))
 local function downloadFile(path, func)
 	if not isfile(path) then
 		local suc, res = pcall(function()
-			return game:HttpGet('https://raw.githubusercontent.com/km7MyXPbLzXA0yWNoFRGcGg/EEE/'..readfile('newvape/profiles/commit.txt')..'/'..select(1, path:gsub('newvape/', '')), true)
+			return game:HttpGet('https://raw.githubusercontent.com/chinse394-netizen/Coo/'..readfile('Coo/profiles/commit.txt')..'/'..select(1, path:gsub('Coo/', '')), true)
 		end)
 		if not suc or res == '404: Not Found' then
 			error(res)
@@ -62,9 +62,9 @@ local function finishLoading()
 			local teleportScript = [[
 				shared.vapereload = true
 				if shared.VapeDeveloper then
-					loadstring(readfile('newvape/loader.lua'), 'loader')()
+					loadstring(readfile('Coo/loader.lua'), 'loader')()
 				else
-					loadstring(game:HttpGet('https://raw.githubusercontent.com/km7MyXPbLzXA0yWNoFRGcGg/EEE/'..readfile('newvape/profiles/commit.txt')..'/loader.lua', true), 'loader')()
+					loadstring(game:HttpGet('https://raw.githubusercontent.com/chinse394-netizen/Coo/'..readfile('Coo/profiles/commit.txt')..'/loader.lua', true), 'loader')()
 				end
 			]]
 			if shared.VapeDeveloper then
@@ -86,32 +86,32 @@ local function finishLoading()
 	end
 end
 
-if not isfile('newvape/profiles/gui.txt') then
-	writefile('newvape/profiles/gui.txt', 'new')
+if not isfile('Coo/profiles/gui.txt') then
+	writefile('Coo/profiles/gui.txt', 'new')
 end
-local gui = readfile('newvape/profiles/gui.txt')
+local gui = readfile('Coo/profiles/gui.txt')
 
-if not isfolder('newvape/assets/'..gui) then
-	makefolder('newvape/assets/'..gui)
+if not isfolder('Coo/assets/'..gui) then
+	makefolder('Coo/assets/'..gui)
 end
 if setthreadidentity then setthreadidentity(8) end
-vape = loadstring(downloadFile('newvape/guis/'..gui..'.lua'), 'gui')()
+vape = loadstring(downloadFile('Coo/guis/'..gui..'.lua'), 'gui')()
 shared.vape = vape
 
 if not shared.VapeIndependent then
 	if setthreadidentity then setthreadidentity(8) end
-	loadstring(downloadFile('newvape/games/universal.lua'), 'universal')()
-	if isfile('newvape/games/'..game.PlaceId..'.lua') then
+	loadstring(downloadFile('Coo/games/universal.lua'), 'universal')()
+	if isfile('Coo/games/'..game.PlaceId..'.lua') then
 		if setthreadidentity then setthreadidentity(8) end
-		loadstring(readfile('newvape/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId))(...)
+		loadstring(readfile('Coo/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId))(...)
 	else
 		if not shared.VapeDeveloper then
 			local suc, res = pcall(function()
-				return game:HttpGet('https://raw.githubusercontent.com/km7MyXPbLzXA0yWNoFRGcGg/EEE/'..readfile('newvape/profiles/commit.txt')..'/games/'..game.PlaceId..'.lua', true)
+				return game:HttpGet('https://raw.githubusercontent.com/chinse394-netizen/Coo/'..readfile('Coo/profiles/commit.txt')..'/games/'..game.PlaceId..'.lua', true)
 			end)
 			if suc and res ~= '404: Not Found' then
 				if setthreadidentity then setthreadidentity(8) end
-				loadstring(downloadFile('newvape/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId))(...)
+				loadstring(downloadFile('Coo/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId))(...)
 			end
 		end
 	end
@@ -119,7 +119,7 @@ if not shared.VapeIndependent then
 	-- Load game-specific category extensions before final GUI initialization.
 	if setthreadidentity then setthreadidentity(8) end
 	pcall(function()
-		loadstring(downloadFile('newvape/libraries/kits.lua'), 'kits')()
+		loadstring(downloadFile('Coo/libraries/kits.lua'), 'kits')()
 	end)
 
 	if setthreadidentity then setthreadidentity(8) end
