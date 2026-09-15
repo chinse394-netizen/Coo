@@ -26370,23 +26370,30 @@ run(function()
 					local now = tick()
 					if actualRoot and now >= nextAttack then
 						local attackInterval = ATTACK_INTERVAL
-						-- Advance before dispatch so a slow/blocked remote cannot stall
-						-- the target scan or bunch the next attack after a hitch.
+						-- Advance before dispatch so an expensive send cannot stall target
+						-- scanning or bunch attacks after a scheduler hitch.
 						nextAttack = now + attackInterval
 						local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 						local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
-						task.spawn(function()
+						-- Snapshot every value used by the deferred call.  `task.spawn` can
+						-- overlap sends under load; `task.defer` runs after this scan pass,
+						-- keeping one stable cadence instead of periodic slowdowns.
+						local remote = AttackRemote
+						local weapon = sword.tool
+						local targetCharacter = v.Character
+						local targetPosition = actualRoot.Position
+						task.defer(function()
 							pcall(function()
-								AttackRemote:FireServer({
-								weapon = sword.tool,
+								remote:FireServer({
+								weapon = weapon,
 								chargedAttack = {chargeRatio = 0},
-								entityInstance = v.Character,
+								entityInstance = targetCharacter,
 												validate = {
 													raycast = {
 														cameraPosition = {value = pos},
 														cursorDirection = {value = dir}
 													},
-													targetPosition = {value = actualRoot.Position},
+											targetPosition = {value = targetPosition},
 													selfPosition = {value = pos}
 												}
 								})
