@@ -25081,6 +25081,7 @@ run(function()
             AirHitsChance.Object.Visible = true
         end
     end)
+
 end)
 
 run(function()
@@ -26212,7 +26213,7 @@ run(function()
 	end
 
 	Killaura = vape.Categories.Blatant:CreateModule({
-		Name = 'KillauraV2',
+		Name = 'KillauraL',
 		Function = function(callback)
 			if callback then
 				-- Keep controller refreshes out of the attack loop so they cannot stall a hit.
@@ -26299,6 +26300,7 @@ run(function()
 				-- Schedule attack attempts independently from target scanning.  This keeps
 				-- the requested rate stable instead of letting frame/update timing drift it.
 				local nextAttack = tick()
+				local lastTool
 				repeat
 					local attacked = {}
 					local ok = pcall(function()
@@ -26318,7 +26320,10 @@ run(function()
 							})
 
 							if #plrs > 0 then
-								switchItem(sword.tool, 0)
+								if lastTool ~= sword.tool then
+									switchItem(sword.tool, 0)
+									lastTool = sword.tool
+								end
 								local selfpos = root.Position
 								local flatFacing = root.CFrame.LookVector * Vector3.new(1, 0, 1)
 								-- Looking up/down shortens the projected look vector.  Normalizing it
@@ -26379,12 +26384,19 @@ run(function()
 												}
 											})
 										end)
-										if sent then
-											nextAttack = now + attackInterval
-											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-											store.attackReach = (delta.Magnitude * 100) // 1 / 100
-											store.attackReachUpdate = tick() + 1
-										end
+						if sent then
+							bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
+							store.attackReach = (delta.Magnitude * 100) // 1 / 100
+							store.attackReachUpdate = tick() + 1
+							-- Schedule from the current send.  Catching up old deadlines makes
+							-- back-to-back requests after a frame hitch, which is what caused the
+							-- visible mini-freezes.
+							nextAttack = now + attackInterval
+						else
+							-- The background refresher handles stale remotes.  Never refresh it
+							-- in this hot path because that can stall target scanning.
+							nextAttack = now + 0.01
+						end
 									end
 								end
 							end
@@ -26699,4 +26711,12 @@ run(function()
 		Name = 'Swing only',
 		Tooltip = 'Only attacks while swinging manually'
 	})
+
+	-- Enable KillauraL after all of its controls are ready.  The other aura
+	-- implementation remains untouched and disabled, preventing competing loops.
+	task.defer(function()
+		if not Killaura.Enabled then
+			Killaura:Toggle()
+		end
+	end)
 end)  
