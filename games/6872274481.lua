@@ -26146,7 +26146,6 @@ run(function()
 		Tooltip = '100 = always pick up | 50 = only when below half HP'
 	})
 end)
-
 local Attacking
 run(function()
 	local Killaura
@@ -26220,7 +26219,7 @@ run(function()
 	end
 
 	Killaura = vape.Categories.Blatant:CreateModule({
-		Name = 'KillauraV2',
+		Name = 'KillauraL',
 		Function = function(callback)
 			if callback then
 				-- Keep controller refreshes out of the attack loop so they cannot stall a hit.
