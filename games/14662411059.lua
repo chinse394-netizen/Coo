@@ -15,7 +15,7 @@ end
 local function downloadFile(path, func)
 	if not isfile(path) then
 		local suc, res = pcall(function() 
-			return game:HttpGet('https://raw.githubusercontent.com/lioboris96-lgtm/VapeV4ForRoblox/'..readfile('newvape/profiles/commit.txt')..'/'..select(1, path:gsub('newvape/', '')), true) 
+			return game:HttpGet('https://raw.githubusercontent.com/chinse394-netizen/Coo/'..readfile('Coo/profiles/commit.txt')..'/'..select(1, path:gsub('Coo/', '')), true) 
 		end)
 		if not suc or res == '404: Not Found' then 
 			error(res) 
@@ -29,15 +29,15 @@ local function downloadFile(path, func)
 end
 
 vape.Place = 11630038968
-if isfile('newvape/games/'..vape.Place..'.lua') then
-	loadstring(readfile('newvape/games/'..vape.Place..'.lua'), 'bridge duel')()
+if isfile('Coo/games/'..vape.Place..'.lua') then
+	loadstring(readfile('Coo/games/'..vape.Place..'.lua'), 'bridge duel')()
 else
 	if not shared.VapeDeveloper then
 		local suc, res = pcall(function() return 
-			game:HttpGet('https://raw.githubusercontent.com/lioboris96-lgtm/VapeV4ForRoblox/'..readfile('newvape/profiles/commit.txt')..'/games/'..vape.Place..'.lua', true) 
+			game:HttpGet('https://raw.githubusercontent.com/chinse394-netizen/Coo/'..readfile('Coo/profiles/commit.txt')..'/games/'..vape.Place..'.lua', true) 
 		end)
 		if suc and res ~= '404: Not Found' then
-			loadstring(downloadFile('newvape/games/'..vape.Place..'.lua'), 'bridge duel')()
+			loadstring(downloadFile('Coo/games/'..vape.Place..'.lua'), 'bridge duel')()
 		end
 	end
 end
