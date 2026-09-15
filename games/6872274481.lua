@@ -26387,13 +26387,14 @@ run(function()
 							bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
 							store.attackReach = (delta.Magnitude * 100) // 1 / 100
 							store.attackReachUpdate = tick() + 1
-							-- Advance from the previous deadline so frame/task jitter does not
-							-- slowly reduce the number of successful hits in a 10-second window.
-							nextAttack = nextAttack + attackInterval
+							-- Schedule from the current send.  Catching up old deadlines makes
+							-- back-to-back requests after a frame hitch, which is what caused the
+							-- visible mini-freezes.
+							nextAttack = now + attackInterval
 						else
-							refreshAttackRemote()
-							-- Retry on the next scan; do not insert a visible pause.
-							nextAttack = now
+							-- The background refresher handles stale remotes.  Never refresh it
+							-- in this hot path because that can stall target scanning.
+							nextAttack = now + 0.01
 						end
 									end
 								end
