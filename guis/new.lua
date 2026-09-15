@@ -17,7 +17,8 @@ local mainapi = {
 	RainbowUpdateSpeed = {Value = 60},
 	RainbowTable = {},
 	Scale = {Value = 1},
-	ThreadFix = setthreadidentity and true or false,
+	-- Do not switch to executor identity 8; it lacks Plugin capability on some executors.
+	ThreadFix = false,
 	ToggleNotifications = {},
 	Version = '4.18',
 	Windows = {}
