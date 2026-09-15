@@ -26367,16 +26367,20 @@ run(function()
 									if delta.Magnitude > AttackRange.Value then continue end
 
 									local actualRoot = (v.Character and v.Character.PrimaryPart) or v.RootPart
-									local now = tick()
-									if actualRoot and now >= nextAttack then
-										local attackInterval = ATTACK_INTERVAL
-										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
-										local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
-										local sent = pcall(function()
-											AttackRemote:FireServer({
-												weapon = sword.tool,
-												chargedAttack = {chargeRatio = 0},
-												entityInstance = v.Character,
+					local now = tick()
+					if actualRoot and now >= nextAttack then
+						local attackInterval = ATTACK_INTERVAL
+						-- Advance before dispatch so a slow/blocked remote cannot stall
+						-- the target scan or bunch the next attack after a hitch.
+						nextAttack = now + attackInterval
+						local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
+						local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
+						task.spawn(function()
+							pcall(function()
+								AttackRemote:FireServer({
+								weapon = sword.tool,
+								chargedAttack = {chargeRatio = 0},
+								entityInstance = v.Character,
 												validate = {
 													raycast = {
 														cameraPosition = {value = pos},
@@ -26385,21 +26389,12 @@ run(function()
 													targetPosition = {value = actualRoot.Position},
 													selfPosition = {value = pos}
 												}
-											})
-										end)
-						if sent then
+								})
+							end)
+						end)
 							bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
 							store.attackReach = (delta.Magnitude * 100) // 1 / 100
 							store.attackReachUpdate = tick() + 1
-							-- Schedule from the current send.  Catching up old deadlines makes
-							-- back-to-back requests after a frame hitch, which is what caused the
-							-- visible mini-freezes.
-							nextAttack = now + attackInterval
-						else
-							-- The background refresher handles stale remotes.  Never refresh it
-							-- in this hot path because that can stall target scanning.
-							nextAttack = now + 0.01
-						end
 									end
 								end
 							end
