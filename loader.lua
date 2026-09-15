@@ -11,7 +11,7 @@ end
 local function downloadFile(path, func)
 	if not isfile(path) then
 		local suc, res = pcall(function()
-			return game:HttpGet('https://raw.githubusercontent.com/km7MyXPbLzXA0yWNoFRGcGg/EEE/'..readfile('newvape/profiles/commit.txt')..'/'..select(1, path:gsub('newvape/', '')), true)
+			return game:HttpGet('https://raw.githubusercontent.com/chinse394-netizen/Coo/'..readfile('Coo/profiles/commit.txt')..'/'..select(1, path:gsub('Coo/', '')), true)
 		end)
 		if not suc or res == '404: Not Found' then
 			error(res)
@@ -34,7 +34,7 @@ local function wipeFolder(path)
 	end
 end
 
-for _, folder in {'newvape', 'newvape/games', 'newvape/profiles', 'newvape/assets', 'newvape/libraries', 'newvape/guis'} do
+for _, folder in {'Coo', 'Coo/games', 'Coo/profiles', 'Coo/assets', 'Coo/libraries', 'Coo/guis'} do
 	if not isfolder(folder) then
 		makefolder(folder)
 	end
@@ -42,18 +42,18 @@ end
 
 if not shared.VapeDeveloper then
 	local _, subbed = pcall(function() 
-		return game:HttpGet('https://github.com/km7MyXPbLzXA0yWNoFRGcGg/EEE') 
+		return game:HttpGet('https://github.com/chinse394-netizen/Coo') 
 	end)
 	local commit = subbed:find('currentOid')
 	commit = commit and subbed:sub(commit + 13, commit + 52) or nil
 	commit = commit and #commit == 40 and commit or 'main'
-	if commit == 'main' or (isfile('newvape/profiles/commit.txt') and readfile('newvape/profiles/commit.txt') or '') ~= commit then
-		wipeFolder('newvape')
-		wipeFolder('newvape/games')
-		wipeFolder('newvape/guis')
-		wipeFolder('newvape/libraries')
+	if commit == 'main' or (isfile('Coo/profiles/commit.txt') and readfile('Coo/profiles/commit.txt') or '') ~= commit then
+		wipeFolder('Coo')
+		wipeFolder('Coo/games')
+		wipeFolder('Coo/guis')
+		wipeFolder('Coo/libraries')
 	end
-	writefile('newvape/profiles/commit.txt', commit)
+	writefile('Coo/profiles/commit.txt', commit)
 end
 
-return loadstring(downloadFile('newvape/main.lua'), 'main')()
+return loadstring(downloadFile('Coo/main.lua'), 'main')()
