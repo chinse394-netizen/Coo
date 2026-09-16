@@ -3368,7 +3368,7 @@ run(function()
                                         store.attackReachUpdate = tick() + 1
                                         swingCooldown = tick()
 
-                                        AttackRemote:FireServer({
+                                        getAttackRemote():FireServer({
                                             weapon = sword.tool,
                                             chargedAttack = {chargeRatio = 0},
                                             entityInstance = v.Character,
@@ -22283,7 +22283,7 @@ run(function()
                                 local dir = CFrame.lookAt(localPosition, ent.RootPart.Position).LookVector
                                 local pos = localPosition + dir * math.max(delta.Magnitude - 14.4, 0)
                                 bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-                                AttackRemote:FireServer({
+                                getAttackRemote():FireServer({
                                     weapon = sword.tool,
                                     chargedAttack = {chargeRatio = 0},
                                     entityInstance = ent.Character,
@@ -26173,7 +26173,7 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local ATTACKS_PER_TEN_SECONDS = 36
+	local ATTACKS_PER_TEN_SECONDS = 38
 	local AttackRemote = {FireServer = function() end}
 	local nextRemoteRefresh = 0
 	local function getAttackRemote()
@@ -26364,11 +26364,11 @@ run(function()
 									local now = tick()
 									if actualRoot and now >= nextAttack then
 										local late = now - nextAttack
-										nextAttack = math.max(now, nextAttack) + ATTACK_INTERVAL
+										nextAttack = math.max(now, nextAttack) + (10 / ATTACKS_PER_TEN_SECONDS)
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 										local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
 										pcall(function()
-											AttackRemote:FireServer({
+											getAttackRemote():FireServer({
 												weapon = sword.tool,
 												chargedAttack = {chargeRatio = 0},
 												entityInstance = v.Character,
