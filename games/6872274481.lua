@@ -26173,16 +26173,21 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local ATTACKS_PER_TEN_SECONDS = 38
-	local ATTACK_INTERVAL = 10 / ATTACKS_PER_TEN_SECONDS
+	local ATTACKS_PER_TEN_SECONDS = 36
 	local AttackRemote = {FireServer = function() end}
-	local function refreshAttackRemote()
-		local ok, remote = pcall(function()
-			return bedwars.Client:Get(remotes.AttackEntity).instance
-		end)
-		if ok and remote then
-			AttackRemote = remote
+	local nextRemoteRefresh = 0
+	local function getAttackRemote()
+		if tick() >= nextRemoteRefresh then
+			nextRemoteRefresh = tick() + 2
+			local ok, remote = pcall(function()
+				return bedwars.Client:Get(remotes.AttackEntity).instance
+			end)
+			if ok and remote then
+				AttackRemote = remote
+			end
 		end
+		return AttackRemote
+	end
 	end
 
 	local function getAttackData()
@@ -26484,7 +26489,7 @@ run(function()
 	})
 	UpdateRate = Killaura:CreateSlider({
 		Name = 'Update rate',
-		Min = 60,
+		Min = 1,
 		Max = 120,
 		Default = 120,
 		Suffix = 'hz'
