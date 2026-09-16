@@ -26175,7 +26175,7 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local ATTACKS_PER_TEN_SECONDS = 35
+	local ATTACKS_PER_TEN_SECONDS = 36
 	local AttackRemote = {FireServer = function() end}
 	local nextRemoteRefresh = 0
 	local function getAttackRemote()
@@ -26183,7 +26183,7 @@ run(function()
 		-- Keep the last known-good instance, but refresh it periodically so one stale
 		-- reference cannot make the aura appear to stop.
 		if tick() >= nextRemoteRefresh then
-			nextRemoteRefresh = tick() + 2
+			nextRemoteRefresh = tick() + 1
 			local ok, remote = pcall(function()
 				return bedwars.Client:Get(remotes.AttackEntity).instance
 			end)
@@ -26217,7 +26217,7 @@ run(function()
 		end
 
 		if LegitAura.Enabled then
-			if (tick() - bedwars.SwordController.lastSwing) > 0.2 then return false end
+			if (tick() - bedwars.SwordController.lastSwing) > 0.1 then return false end
 		end
 
 		return sword, meta
@@ -26418,7 +26418,7 @@ run(function()
 					-- Keep the attack loop at the selected cadence even while targets are
 					-- present.  The old target-count delay could override Update rate and
 					-- leave sword swings waiting long enough to be dropped.
-					task.wait(1 / math.clamp(UpdateRate.Value, 1, 120))
+					task.wait(1 / math.clamp(UpdateRate.Value, 1, 180))
 				until not Killaura.Enabled
 			else
 				-- Stop the running attack/animation tasks before restoring normal input.
