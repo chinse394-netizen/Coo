@@ -3262,7 +3262,7 @@ run(function()
                                         C0 = armC0 * v.CFrame
                                     })
                                     AnimTween:Play()
-                                    AnimTween.Completed:Wait()
+                                    task.wait(v.Time / AnimationSpeed.Value)
                                     first = false
                                     if (not Killaura.Enabled) or (not Attacking) then break end
                                 end
@@ -24214,7 +24214,7 @@ run(function()
                                         C0 = armC0 * v.CFrame
                                     })
                                     AnimTween:Play()
-                                    AnimTween.Completed:Wait()
+                                    task.wait(v.Time / AnimationSpeed.Value)
                                     first = false
                                     if (not Killaura.Enabled) or (not Attacking) then break end
                                 end
@@ -26173,7 +26173,7 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local ATTACKS_PER_TEN_SECONDS = 35
+	local ATTACKS_PER_TEN_SECONDS = 37
 	local ATTACK_INTERVAL = 10 / ATTACKS_PER_TEN_SECONDS
 	local AttackRemote = {FireServer = function() end}
 	local function refreshAttackRemote()
@@ -26274,7 +26274,7 @@ run(function()
 										C0 = armC0 * v.CFrame
 									})
 									AnimTween:Play()
-									AnimTween.Completed:Wait()
+									task.wait(v.Time / AnimationSpeed.Value)
 									first = false
 									if (not Killaura.Enabled) or (not Attacking) then break end
 								end
