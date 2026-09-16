@@ -26213,7 +26213,7 @@ run(function()
 	end
 
 	Killaura = vape.Categories.Blatant:CreateModule({
-		Name = 'Killaura',
+		Name = 'KillauraL',
 		Function = function(callback)
 			if callback then
 				-- Keep controller refreshes out of the attack loop so they cannot stall a hit.
