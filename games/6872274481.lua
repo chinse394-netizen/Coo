@@ -26173,7 +26173,7 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local ATTACKS_PER_TEN_SECONDS = 50
+	local ATTACKS_PER_TEN_SECONDS = 35
 	local ATTACK_INTERVAL = 10 / ATTACKS_PER_TEN_SECONDS
 	local AttackRemote = {FireServer = function() end}
 	local function refreshAttackRemote()
@@ -26359,7 +26359,7 @@ run(function()
 									local now = tick()
 									if actualRoot and now >= nextAttack then
 										local late = now - nextAttack
-										nextAttack = (nextAttack == 0 or late > ATTACK_INTERVAL) and (now + ATTACK_INTERVAL) or (nextAttack + ATTACK_INTERVAL)
+										nextAttack = math.max(now, nextAttack) + ATTACK_INTERVAL
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 										local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
 										pcall(function()
