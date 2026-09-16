@@ -26173,17 +26173,27 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local ATTACKS_PER_TEN_SECONDS = 37
-	local ATTACK_INTERVAL = 10 / ATTACKS_PER_TEN_SECONDS
+	local ATTACKS_PER_TEN_SECONDS = 35
 	local AttackRemote = {FireServer = function() end}
-	local function refreshAttackRemote()
-		local ok, remote = pcall(function()
-			return bedwars.Client:Get(remotes.AttackEntity).instance
-		end)
-		if ok and remote then
-			AttackRemote = remote
+	local nextRemoteRefresh = 0
+	local function getAttackRemote()
+		-- The game's remote can be replaced after a respawn or a controller reload.
+		-- Keep the last known-good instance, but refresh it periodically so one stale
+		-- reference cannot make the aura appear to stop.
+		if tick() >= nextRemoteRefresh then
+			nextRemoteRefresh = tick() + 2
+			local ok, remote = pcall(function()
+				return bedwars.Client:Get(remotes.AttackEntity).instance
+			end)
+			if ok and remote then
+				AttackRemote = remote
+			end
 		end
+		return AttackRemote
 	end
+	task.spawn(function()
+		getAttackRemote()
+	end)
 
 	local function getAttackData()
 		if Mouse.Enabled then
@@ -26215,15 +26225,6 @@ run(function()
 		Name = 'KillauraL',
 		Function = function(callback)
 			if callback then
-				refreshAttackRemote()
-				task.spawn(function()
-					repeat
-						task.wait(2)
-						if Killaura.Enabled then
-							refreshAttackRemote()
-						end
-					until not Killaura.Enabled
-				end)
 				if inputService.TouchEnabled then
 					pcall(function()
 						lplr.PlayerGui.MobileUI['2'].Visible = Limit.Enabled
@@ -26245,6 +26246,8 @@ run(function()
 							}
 						}
 					}
+					-- Save the live controller upvalues.  Restoring to bedwars.Knit is not
+					-- reliable: the game can use a different controller after an update.
 					swordEffectFunction = oldSwing or bedwars.SwordController.playSwordEffect
 					scytheAnimationFunction = bedwars.ScytheController.playLocalAnimation
 					local _, currentSwordEffectController = debug.getupvalue(swordEffectFunction, 6)
@@ -26274,7 +26277,7 @@ run(function()
 										C0 = armC0 * v.CFrame
 									})
 									AnimTween:Play()
-									task.wait(v.Time / AnimationSpeed.Value)
+									AnimTween.Completed:Wait()
 									first = false
 									if (not Killaura.Enabled) or (not Attacking) then break end
 								end
@@ -26293,8 +26296,9 @@ run(function()
 					end)
 				end
 
-				local nextAttack = 0
-				local lastTool
+				-- Schedule attack attempts independently from target scanning.  This keeps
+				-- the requested rate stable instead of letting frame/update timing drift it.
+				local nextAttack = tick()
 				repeat
 					local attacked = {}
 					local ok = pcall(function()
@@ -26314,12 +26318,11 @@ run(function()
 							})
 
 							if #plrs > 0 then
-								if lastTool ~= sword.tool then
-									switchItem(sword.tool, 0)
-									lastTool = sword.tool
-								end
+								switchItem(sword.tool, 0)
 								local selfpos = root.Position
 								local flatFacing = root.CFrame.LookVector * Vector3.new(1, 0, 1)
+								-- Looking up/down shortens the projected look vector.  Normalizing it
+								-- avoids falsely failing the angle check and dropping nearby targets.
 								local localfacing = flatFacing.Magnitude > 0 and flatFacing.Unit or nil
 
 								for _, v in plrs do
@@ -26358,28 +26361,28 @@ run(function()
 									local actualRoot = (v.Character and v.Character.PrimaryPart) or v.RootPart
 									local now = tick()
 									if actualRoot and now >= nextAttack then
-										local late = now - nextAttack
-										nextAttack = math.max(now, nextAttack) + ATTACK_INTERVAL
+										local attackInterval = 10 / ATTACKS_PER_TEN_SECONDS
+										nextAttack = now + attackInterval
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 										local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
-										pcall(function()
-											AttackRemote:FireServer({
-												weapon = sword.tool,
-												chargedAttack = {chargeRatio = 0},
-												entityInstance = v.Character,
-												validate = {
-													raycast = {
-														cameraPosition = {value = pos},
-														cursorDirection = {value = dir}
-													},
-													targetPosition = {value = actualRoot.Position},
-													selfPosition = {value = pos}
-												}
-											})
-										end)
 										bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
 										store.attackReach = (delta.Magnitude * 100) // 1 / 100
 										store.attackReachUpdate = tick() + 1
+
+										local remote = getAttackRemote()
+										remote:FireServer({
+											weapon = sword.tool,
+											chargedAttack = {chargeRatio = 0},
+											entityInstance = v.Character,
+											validate = {
+												raycast = {
+													cameraPosition = {value = pos},
+													cursorDirection = {value = dir}
+												},
+												targetPosition = {value = actualRoot.Position},
+												selfPosition = {value = pos}
+											}
+										})
 									end
 								end
 							end
@@ -26410,9 +26413,13 @@ run(function()
 						store.KillauraTarget = nil
 					end
 
-					task.wait(1 / math.clamp(UpdateRate.Value, 60, 120))
+					-- Keep the attack loop at the selected cadence even while targets are
+					-- present.  The old target-count delay could override Update rate and
+					-- leave sword swings waiting long enough to be dropped.
+					task.wait(1 / math.clamp(UpdateRate.Value, 1, 120))
 				until not Killaura.Enabled
 			else
+				-- Stop the running attack/animation tasks before restoring normal input.
 				Attacking = false
 				if AnimTween then
 					AnimTween:Cancel()
@@ -26484,9 +26491,9 @@ run(function()
 	})
 	UpdateRate = Killaura:CreateSlider({
 		Name = 'Update rate',
-		Min = 60,
+		Min = 1,
 		Max = 120,
-		Default = 120,
+		Default = 60,
 		Suffix = 'hz'
 	})
 	AttackRate = Killaura:CreateSlider({
@@ -26691,10 +26698,4 @@ run(function()
 		Name = 'Swing only',
 		Tooltip = 'Only attacks while swinging manually'
 	})
-
-	task.defer(function()
-		if not Killaura.Enabled then
-			Killaura:Toggle()
-		end
-	end)
 end)  
