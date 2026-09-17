@@ -3034,7 +3034,9 @@ run(function()
     								continue
     							end
                                 local actualRoot = v.Character and (v.Character.PrimaryPart or v.RootPart)
-                                if not actualRoot or not actualRoot.Parent or not v.Humanoid or v.Humanoid.Health <= 0 then continue end
+                                local hum = v.Humanoid
+                                local health = hum and hum.Health
+                                if not actualRoot or not actualRoot.Parent or type(health) ~= 'number' or health <= 0 then continue end
                                 local delta = actualRoot.Position - selfpos
                                 local horizontal = delta * Vector3.new(1, 0, 1)
                                 local angle = 0
@@ -3109,8 +3111,9 @@ run(function()
                                                 end
 
                                                 local item, ammo, projectile, itemMeta = unpack(projectiles[projectileIndex])
-                                                if tick() > (FireRates[item.itemType] or 0) and not (store.hand.tool and store.hand.tool.Name == 'telepearl') then
-                                                    local projmeta = bedwars.ProjectileMeta[projectile]
+                                                if item and itemMeta and tick() > (FireRates[item.itemType] or 0) and not (store.hand.tool and store.hand.tool.Name == 'telepearl') then
+                                                        local projmeta = bedwars.ProjectileMeta and bedwars.ProjectileMeta[projectile]
+                                                    if projmeta then
                                                     local projSpeed = projmeta.launchVelocity
                                                     local gravity = projmeta.gravitationalAcceleration or 196.2
                                                     local oldhotbar, oldtool = store.inventory.hotbarSlot, store.hand.tool
@@ -3161,6 +3164,7 @@ run(function()
                                                     task.spawn(function()
                                                         if Legit.Enabled then hotbarSwitch(oldhotbar) end
                                                     end)
+                                                    end
                                                 end
                                             end
                                         end
