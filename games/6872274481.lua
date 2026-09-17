@@ -2017,16 +2017,17 @@ end)
 						return base
 					end
 				
-					local function canHitWithHitreg()
+							local function canHitWithHitreg()
 						local currentTime = tick()
 						local hitreg = (HitRate and HitRate.Value or 34) + (math.random(-3, 3) / 10)
-						local delayBetweenHits = 10 / math.max(hitreg, 1)
+						-- Same retry spacing the Killaura module uses, so SilentAura cannot back off further.
+						local delayBetweenHits = math.max(10 / math.max(hitreg, 1), 0.12)
 						if currentTime - lastHitTime >= delayBetweenHits then
-							lastHitTime = currentTime
-							return true
+						lastHitTime = currentTime
+						return true
 						end
 						return false
-					end
+						end
 				
 					local function getSilentTargetPosition(ent, dist)
 						local root = ent.RootPart
