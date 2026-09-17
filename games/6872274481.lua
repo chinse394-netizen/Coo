@@ -2990,7 +2990,7 @@ run(function()
                     end)
                 end
 
-                local swingCooldown, switchCooldown, lastSwing, targetIndex = tick(), tick(), 0, 0
+                local switchCooldown, lastSwing, targetIndex = tick(), 0, 0
                 local lastShot, projectileIndex = tick(), 0
                 local nextHit, lastMiss = 0, 0
                 repeat
@@ -2999,9 +2999,13 @@ run(function()
                     store.KillauraTarget = nil
                     if sword then
                         local current = tick()
-                        local minHitInterval = math.max(0.01, math.min((meta.sword.attackSpeed or 0.33) - 0.009, 10 / 35))
-                        -- All targets in a Multi batch share one scheduled attack window.
-                        local hitReady = current >= nextHit and (not Sync.Enabled or current - swingCooldown >= SwingTime.Value)
+                        -- Retry promptly without sending an attack every frame.
+                        local minHitInterval = math.max(0.01, math.min((meta.sword.attackSpeed or 0.33) - 0.009, 0.12))
+                        if Sync.Enabled then
+                            minHitInterval = math.max(minHitInterval, SwingTime.Value)
+                        end
+                        -- One clock preserves cadence for both synced hits and Multi batches.
+                        local hitReady = current >= nextHit
                         local sentHit = false
                         local plrs = entitylib.AllPosition({
                             Range = SwingRange.Value,
@@ -3081,8 +3085,6 @@ run(function()
                                         bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
                                         store.attackReach = math.floor(delta.Magnitude * 100) / 100
                                         store.attackReachUpdate = tick() + 1
-                                        swingCooldown = tick()
-
                                         AttackRemote:FireServer({
                                             weapon = sword.tool,
                                             chargedAttack = {chargeRatio = 0},
@@ -3096,7 +3098,7 @@ run(function()
                                                 selfPosition = {value = pos}
                                             }
                                         })
-    
+
                                         if FastHits.Enabled and tick() > lastShot and not entitylib.Wallcheck(entitylib.character.RootPart.Position, actualRoot.Position, {gameCamera, lplr.Character, v.Character}) then
                                             local projectiles = getProjectiles()
                                             if #projectiles > 0 then
@@ -3104,7 +3106,7 @@ run(function()
                                                 if not projectiles[projectileIndex] then
                                                     projectileIndex = 1
                                                 end
-                                                
+
                                                 local item, ammo, projectile, itemMeta = unpack(projectiles[projectileIndex])
                                                 if tick() > (FireRates[item.itemType] or 0) and not (store.hand.tool and store.hand.tool.Name == 'telepearl') then
                                                     local projmeta = bedwars.ProjectileMeta[projectile]
@@ -3114,7 +3116,7 @@ run(function()
                                                     local hotbar = getHotbar(item.tool)
 
                                                     if hotbar then
-                                                        switchItem(item.tool)
+                                                        switchItem(item.tool, 0)
                                                         if Legit.Enabled then hotbarSwitch(hotbar) end
                                                     end
 
@@ -3124,34 +3126,37 @@ run(function()
                                                         local shootPosition = (CFrame.new(selfpos, calc) * CFrame.new(Vector3.new(-bedwars.BowConstantsTable.RelX, -bedwars.BowConstantsTable.RelY, -bedwars.BowConstantsTable.RelZ))).Position
 
                                                         bedwars.ProjectileController:createLocalProjectile(itemMeta, ammo, projectile, shootPosition, id, sdir * projSpeed, {drawDurationSeconds = 1})
-                                                        local _, res = pcall(function() return projectileRemote:InvokeServer(
-                                                            item.tool,
-                                                            ammo,
-                                                            projectile,
-                                                            shootPosition,
-                                                            selfpos,
-                                                            sdir * projSpeed,
-                                                            id,
-                                                            {
-                                                                drawDurationSeconds = 1,
-                                                                shotId = httpService:GenerateGUID(false)
-                                                            },
-                                                            workspace:GetServerTimeNow() - 0.045
-                                                        ) end)
-                                                        if res then
-                                                            pcall(function()
-                                                                res.Parent = replicatedStorage
-                                                            end)
-                                                            FireRates[item.itemType] = tick() + itemMeta.fireDelaySec
-                                                            local shoot = itemMeta.launchSound
-                                                            shoot = shoot and shoot[math.random(1, #shoot)] or nil
-                                                            if shoot then
-                                                                bedwars.SoundManager:playSound(shoot)
-                                                            end
-                                                        end
+                                                        -- Reserve the cooldown before yielding; projectile replies must not stall sword hits.
+                                                        FireRates[item.itemType] = tick() + itemMeta.fireDelaySec
                                                         lastShot = tick() + (lplr:GetNetworkPing() + FireRate.Value)
+                                                        task.spawn(function()
+                                                            local ok, res = pcall(function() return projectileRemote:InvokeServer(
+                                                                item.tool,
+                                                                ammo,
+                                                                projectile,
+                                                                shootPosition,
+                                                                selfpos,
+                                                                sdir * projSpeed,
+                                                                id,
+                                                                {
+                                                                    drawDurationSeconds = 1,
+                                                                    shotId = httpService:GenerateGUID(false)
+                                                                },
+                                                                workspace:GetServerTimeNow() - 0.045
+                                                            ) end)
+                                                            if ok and res then
+                                                                pcall(function()
+                                                                    res.Parent = replicatedStorage
+                                                                end)
+                                                                local shoot = itemMeta.launchSound
+                                                                shoot = shoot and shoot[math.random(1, #shoot)] or nil
+                                                                if shoot then
+                                                                    bedwars.SoundManager:playSound(shoot)
+                                                                end
+                                                            end
+                                                        end)
                                                     end
-                                                    if oldtool then switchItem(oldtool) end
+                                                    if oldtool then switchItem(oldtool, 0) end
                                                     task.spawn(function()
                                                         if Legit.Enabled then hotbarSwitch(oldhotbar) end
                                                     end)
