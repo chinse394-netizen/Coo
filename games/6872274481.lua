@@ -2844,6 +2844,7 @@ run(function()
     local AnimationTween
     local Limit
     local LegitAura
+    local Attacking = false
     local Particles, Boxes, Rings = {}, {}, {}
     local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
     local AttackRemote = {FireServer = function(self, ...) end}
@@ -2890,43 +2891,45 @@ run(function()
     	return items
     end
     local function getAttackData()
+        if not entitylib.isAlive then return false end
         if Mouse.Enabled then
             if not inputService:IsMouseButtonPressed(0) then return false end
         end
-    
+
         if Attackable.Enabled then
             if not entitylib.isAlive then return false end
             if (lplr.Character:GetAttribute('StunnedUntilTime') or 0) > workspace:GetServerTimeNow() then return false end
             if lplr.Character:FindFirstChild('elk') then return false end
             if bedwars.StatusEffectUtil:isActive(lplr.Character, 'frozen') then return false end
         end
-    
+
         if GUI.Enabled then
             if bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then return false end
         end
-    
+
         local sword = Limit.Enabled and store.hand or store.tools.sword
         if not sword or not sword.tool then return false end
-    
+
         local meta = bedwars.ItemMeta[sword.tool.Name]
+        if not meta or not meta.sword then return false end
         if Limit.Enabled then
             if store.hand.toolType ~= 'sword' or bedwars.DaoController.chargingMaid then return false end
         end
-    
+
         if LegitAura.Enabled then
             if (tick() - bedwars.SwordController.lastSwing) > 0.2 then return false end
         end
-    
+
         return sword, meta
     end
-    
+
     local part = Instance.new('Part')
     part.Anchored = true
     part.CanCollide = false
     part.Size = Vector3.one
     part.Parent = workspace
     vape:Clean(part)
-    
+
     Killaura = vape.Categories.Blatant:CreateModule({
         Name = 'Killaura',
         Function = function(callback)
@@ -2948,7 +2951,7 @@ run(function()
                     }
                     debug.setupvalue(bedwars.SwordController.playSwordEffect, 7, fake)
                     debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, fake)
-    
+
                     task.spawn(function()
                         local started = false
                         repeat
@@ -2958,11 +2961,11 @@ run(function()
                                 end
                                 local first = not started
                                 started = true
-    
+
                                 if AnimationMode.Value == 'Random' then
                                     anims.Random = {{CFrame = CFrame.Angles(math.rad(math.random(1, 360)), math.rad(math.random(1, 360)), math.rad(math.random(1, 360))), Time = 0.12}}
                                 end
-    
+
                                 for _, v in anims[AnimationMode.Value] do
                                     AnimTween = tweenService:Create(gameCamera.Viewmodel.RightHand.RightWrist, TweenInfo.new(first and (AnimationTween.Enabled and 0.001 or 0.1) or v.Time / AnimationSpeed.Value, Enum.EasingStyle.Linear), {
                                         C0 = armC0 * v.CFrame
@@ -2979,23 +2982,27 @@ run(function()
                                 })
                                 AnimTween:Play()
                             end
-    
+
                             if not started then
                                 task.wait()
                             end
                         until (not Killaura.Enabled) or (not Animation.Enabled)
                     end)
                 end
-    
+
                 local swingCooldown, switchCooldown, lastSwing, targetIndex = tick(), tick(), 0, 0
                 local lastShot, projectileIndex = tick(), 0
-                local lastHit = 0
-                local lastRealSend = 0
+                local nextHit, lastMiss = 0, 0
                 repeat
                     local attacked, sword, meta = {}, getAttackData()
                     Attacking = false
                     store.KillauraTarget = nil
                     if sword then
+                        local current = tick()
+                        local minHitInterval = math.max(0.01, math.min((meta.sword.attackSpeed or 0.33) - 0.009, 10 / 35))
+                        -- All targets in a Multi batch share one scheduled attack window.
+                        local hitReady = current >= nextHit and (not Sync.Enabled or current - swingCooldown >= SwingTime.Value)
+                        local sentHit = false
                         local plrs = entitylib.AllPosition({
                             Range = SwingRange.Value,
                             Wallcheck = Targets.Walls.Enabled or nil,
@@ -3005,7 +3012,7 @@ run(function()
                             Limit = Mode.Value == 'Single' and 1 or MaxTargets.Value,
                             Sort = sortmethods[Sort.Value]
                         })
-    
+
                         if #plrs > 0 then
                             switchItem(sword.tool, 0)
                             local selfpos = entitylib.character.RootPart.Position
@@ -3021,16 +3028,22 @@ run(function()
                                 if Mode.Value == 'Switch' and i ~= targetIndex then
     								continue
     							end
-                                local delta = (v.RootPart.Position - selfpos)
-                                local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
+                                local actualRoot = v.Character and (v.Character.PrimaryPart or v.RootPart)
+                                if not actualRoot or not actualRoot.Parent or not v.Humanoid or v.Humanoid.Health <= 0 then continue end
+                                local delta = actualRoot.Position - selfpos
+                                local horizontal = delta * Vector3.new(1, 0, 1)
+                                local angle = 0
+                                if horizontal.Magnitude > 0.001 and localfacing.Magnitude > 0.001 then
+                                    angle = math.acos(math.clamp(localfacing.Unit:Dot(horizontal.Unit), -1, 1))
+                                end
                                 if angle > (math.rad(AngleSlider.Value) / 2) then continue end
-    
+
                                 table.insert(attacked, {
                                     Entity = v,
                                     Check = delta.Magnitude > AttackRange.Value and BoxSwingColor or BoxAttackColor
                                 })
                                 targetinfo.Targets[v] = tick() + 1
-    
+
                                 if not Attacking then
                                     Attacking = true
                                     store.KillauraTarget = v
@@ -3041,34 +3054,29 @@ run(function()
                                         if meta.displayName:find(' Scythe') then
                                             bedwars.ScytheController:playLocalAnimation()
                                         end
-    
+
                                         if vape.ThreadFix then
                                             setthreadidentity(8)
                                         end
                                     end
                                 end
-    
-                                -- Keep player hit registration at the same 35 hits/10s cadence as NPCs.
-                                local minHitInterval = math.min((meta.sword.attackSpeed or 0.33) - 0.009, 10 / 35)
-                                print(string.format("[KA Debug] sword: %s | attackSpeed: %s | minHitInterval: %.4f", tostring(sword.itemType), tostring(meta.sword.attackSpeed), minHitInterval))
-                                local current = tick()
+
                                 if delta.Magnitude > AttackRange.Value then
-                                    if (current - lastHit) >= minHitInterval then
-                                        lastHit = lastHit + minHitInterval
-                                        if current - lastHit > minHitInterval then lastHit = current end
+                                    if (current - lastMiss) >= minHitInterval then
+                                        lastMiss = current
                                         pcall(SwingMissRemote.FireServer, SwingMissRemote, {chargeRatio = 0, weapon = sword.tool})
                                     end
                                     continue
                                 end
-
-                                local actualRoot = v.Character.PrimaryPart
-                                if actualRoot and (not Sync.Enabled or (current - swingCooldown >= SwingTime.Value)) and (v.Humanoid.FloorMaterial ~= Enum.Material.Air or math.random(1, 100) < AirChance.Value) then
-                                    if (current - lastHit) >= minHitInterval and (current - lastRealSend) >= minHitInterval then
-                                        lastHit = lastHit + minHitInterval
-                                        if current - lastHit > minHitInterval then lastHit = current end
-                                        lastRealSend = current
-
-                                        local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
+                                if v.Humanoid.FloorMaterial ~= Enum.Material.Air or math.random(1, 100) <= AirChance.Value then
+                                    if hitReady then
+                                        if not sentHit then
+                                            -- Preserve cadence across frame rounding, but never build up a burst after a stall.
+                                            local sendTime = tick()
+                                            nextHit = (sendTime - nextHit < minHitInterval and nextHit or sendTime) + minHitInterval
+                                            sentHit = true
+                                        end
+                                        local dir = delta.Magnitude > 0.001 and delta.Unit or entitylib.character.RootPart.CFrame.LookVector
                                         local pos = selfpos + dir * math.max(delta.Magnitude - 14.4, 0)
                                         bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
                                         store.attackReach = math.floor(delta.Magnitude * 100) / 100
