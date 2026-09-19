@@ -5175,101 +5175,29 @@ local TargetPart
 local Targets
 local FOV
 local OtherProjectiles
-local PredictionMultiplier
-local AdvancedTracking
 local rayCheck = RaycastParams.new()
 rayCheck.FilterType = Enum.RaycastFilterType.Include
 rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
 
     local old
-    local playerMovePatterns = {}
-    local lastPositions = {}
-    local lastVelocities = {}
-    local sampleSize = 10 -- Sample size for movement pattern analysis
 
-    -- Enhanced Ping Function with fallback options
+    -- Fixed Ping Function
     local function getPing()
         local stats = game:GetService("Stats")
         local networkStats = stats and stats.Network
         if networkStats then
             for _, stat in pairs(networkStats:GetChildren()) do
                 if stat.Name:lower():find("ping") then
-                    return (stat:GetValue() / 1000) * 1.05 -- Convert and add 5% buffer
+                    return stat:GetValue() / 1000 -- Convert from milliseconds to seconds
                 end
             end
         end
-        -- Fallback estimation based on tick rate
-        return game:GetService("RunService").Heartbeat:Wait() * 3
-    end
-
-    -- Advanced movement pattern recognition
-    local function analyzeMovementPattern(player, currentPos)
-        local userId = player.UserId or tostring(player)
-        
-        if not lastPositions[userId] then
-            lastPositions[userId] = {}
-            lastVelocities[userId] = {}
-            playerMovePatterns[userId] = {
-                isJuking = false,
-                isBuilding = false,
-                pattern = "unknown",
-                preferredDirection = Vector3.new(0, 0, 0)
-            }
-        end
-        
-        -- Store position history
-        table.insert(lastPositions[userId], currentPos)
-        if #lastPositions[userId] > sampleSize then
-            table.remove(lastPositions[userId], 1)
-        end
-        
-        -- Calculate velocities and acceleration
-        if #lastPositions[userId] >= 2 then
-            local velocity = (lastPositions[userId][#lastPositions[userId]] - lastPositions[userId][#lastPositions[userId]-1])
-            table.insert(lastVelocities[userId], velocity)
-            if #lastVelocities[userId] > sampleSize - 1 then
-                table.remove(lastVelocities[userId], 1)
-            end
-        end
-        
-        -- Analyze for movement patterns if we have enough data
-        if #lastVelocities[userId] >= 3 then
-            local pattern = playerMovePatterns[userId]
-            
-            -- Detect juking (rapid direction changes)
-            local directionChanges = 0
-            local lastDir = lastVelocities[userId][1].Unit
-            for i = 2, #lastVelocities[userId] do
-                local currentDir = lastVelocities[userId][i].Unit
-                local dot = lastDir:Dot(currentDir)
-                if dot < 0.7 then -- Direction changed significantly
-                    directionChanges = directionChanges + 1
-                end
-                lastDir = currentDir
-            end
-            
-            pattern.isJuking = directionChanges >= 2
-            
-            -- Calculate preferred direction (where they're likely to go)
-            local avgVelocity = Vector3.new(0, 0, 0)
-            for _, vel in ipairs(lastVelocities[userId]) do
-                avgVelocity = avgVelocity + vel
-            end
-            pattern.preferredDirection = (avgVelocity / #lastVelocities[userId])
-            
-            -- Detect building
-            local verticalMovement = math.abs(lastPositions[userId][#lastPositions[userId]].Y - lastPositions[userId][1].Y)
-            pattern.isBuilding = verticalMovement > 3
-            
-            return pattern
-        end
-        
-        return playerMovePatterns[userId]
+        return 0 -- Default to zero if unavailable
     end
 
     local ProjectileAimbot = vape.Categories.Blatant:CreateModule({
         Name = 'ProjectileAimbot',
-        Tooltip = 'Silently adjusts your aim towards the enemy with perfect accuracy',
+        Tooltip = 'Silently adjusts your aim towards the enemy',
         Function = function(callback)
             if callback then
                 old = bedwars.ProjectileController.calculateImportantLaunchValues
@@ -5277,10 +5205,10 @@ rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
                 bedwars.ProjectileController.calculateImportantLaunchValues = function(...)
                     local self, projmeta, worldmeta, origin, shootpos = ...
 
-                    -- Get ping in seconds with buffer for network variations
-                    local pingTime = getPing() * PredictionMultiplier.Value
+                    -- Get ping in seconds
+                    local pingTime = getPing()
 
-                    -- Enhanced Target Selection with Ping Compensation
+                    -- Optimized Target Selection with Ping Compensation
                     local plr = entitylib.EntityMouse({
                         Part = TargetPart.Value,
                         Range = FOV.Value,
@@ -5300,14 +5228,14 @@ rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
                         return old(...)
                     end
 
-                    -- Get Projectile Metadata with improved accuracy
+                    -- Get Projectile Metadata
                     local meta = projmeta:getProjectileMeta()
-                    local lifetime = (meta.lifetimeSec or 3) * 1.1 -- Extended lifetime for better accuracy
+                    local lifetime = meta.lifetimeSec or 3
                     local gravity = (meta.gravitationalAcceleration or 196.2) * projmeta.gravityMultiplier
                     local projSpeed = meta.launchVelocity or 100
-                    local offsetPos = pos + (projmeta.projectile == 'owl_projectile' and Vector3.new(0, 0.2, 0) or projmeta.fromPositionOffset)
+                    local offsetPos = pos + (projmeta.projectile == 'owl_projectile' and Vector3.zero or projmeta.fromPositionOffset)
 
-                    -- Adjust for Gravity and Balloons with more precision
+                    -- Adjust for Gravity and Balloons
                     local playerGravity = workspace.Gravity
                     local balloons = plr.Character:GetAttribute('InflatedBalloons') or 0
                     if balloons > 0 then
@@ -5317,43 +5245,11 @@ rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
                         playerGravity = 6
                     end
 
-                    -- Advanced Movement Pattern Analysis
-                    local targetPosition = plr[TargetPart.Value].Position
+                    -- More Accurate Target Position Prediction (Using Ping)
                     local targetVelocity = plr[TargetPart.Value].Velocity
-                    
-                    local movementData
-                    if AdvancedTracking.Enabled then
-                        movementData = analyzeMovementPattern(plr, targetPosition)
-                    end
-                    
-                    -- Advanced Target Position Prediction with pattern recognition
-                    local predictedPosition = targetPosition + (targetVelocity * pingTime)
-                    
-                    -- Apply movement pattern correction
-                    if AdvancedTracking.Enabled and movementData then
-                        -- Juking correction - predict where they're actually going
-                        if movementData.isJuking then
-                            -- Add extra prediction in their preferred direction
-                            predictedPosition = predictedPosition + (movementData.preferredDirection * 1.5)
-                        end
-                        
-                        -- Building correction - aim slightly higher
-                        if movementData.isBuilding then
-                            predictedPosition = predictedPosition + Vector3.new(0, 1.25, 0)
-                        end
-                    end
-                    
-                    -- Aim correction for diagonal movement
-                    if targetVelocity.Magnitude > 10 then
-                        local horizontalSpeed = Vector3.new(targetVelocity.X, 0, targetVelocity.Z).Magnitude
-                        if horizontalSpeed > 12 then
-                            -- They're moving fast, add additional lead
-                            local moveDirection = Vector3.new(targetVelocity.X, 0, targetVelocity.Z).Unit
-                            predictedPosition = predictedPosition + (moveDirection * horizontalSpeed * 0.08)
-                        end
-                    end
+                    local predictedPosition = plr[TargetPart.Value].Position + (targetVelocity * pingTime)
 
-                    -- Higher precision CFrame calculation
+                    -- Improved CFrame Calculation with LookAt
                     local lookAt = CFrame.lookAt(offsetPos, predictedPosition)
                     local newLook = lookAt * CFrame.new(
                         bedwars.BowConstantsTable.RelX,
@@ -5361,46 +5257,24 @@ rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
                         bedwars.BowConstantsTable.RelZ
                     )
 
-                    -- Optimized Trajectory Prediction with multiple attempts for perfect solution
-                    local bestSolution, lowestError = nil, math.huge
-                    
-                    -- Try several slight variations to find the optimal trajectory
-                    for vertOffset = -0.3, 0.3, 0.15 do
-                        for horOffset = -0.2, 0.2, 0.1 do
-                            local adjustedTarget = predictedPosition + Vector3.new(
-                                targetVelocity.X * horOffset,
-                                vertOffset,
-                                targetVelocity.Z * horOffset
-                            )
-                            
-                            local calc = prediction.SolveTrajectory(
-                                newLook.Position,
-                                projSpeed,
-                                gravity,
-                                adjustedTarget,
-                                targetVelocity,
-                                playerGravity,
-                                plr.HipHeight,
-                                plr.Jumping and 42.6 or nil,
-                                rayCheck
-                            )
-                            
-                            if calc then
-                                -- Estimate error based on distance to target
-                                local potentialError = (calc - adjustedTarget).Magnitude
-                                if potentialError < lowestError then
-                                    lowestError = potentialError
-                                    bestSolution = calc
-                                end
-                            end
-                        end
-                    end
+                    -- Optimized Trajectory Prediction
+                    local calc = prediction.SolveTrajectory(
+                        newLook.Position,
+                        projSpeed,
+                        gravity,
+                        predictedPosition, -- Use predicted position
+                        targetVelocity,
+                        playerGravity,
+                        plr.HipHeight,
+                        plr.Jumping and 42.6 or nil,
+                        rayCheck
+                    )
 
-                    if bestSolution then
+                    if calc then
                         targetinfo.Targets[plr] = tick() + 1
 
                         return {
-                            initialVelocity = CFrame.new(newLook.Position, bestSolution).LookVector * projSpeed,
+                            initialVelocity = CFrame.new(newLook.Position, calc).LookVector * projSpeed,
                             positionFrom = offsetPos,
                             deltaT = lifetime,
                             gravitationalAcceleration = gravity,
@@ -5417,7 +5291,7 @@ rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
         end
     })
 
-    -- Enhanced UI Settings
+    -- UI Settings
     Targets = ProjectileAimbot:CreateTargets({
         Players = true,
         Walls = true,
@@ -5440,20 +5314,6 @@ rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
     OtherProjectiles = ProjectileAimbot:CreateToggle({
         Name = 'Other Projectiles',
         Default = true
-    })
-    
-    PredictionMultiplier = ProjectileAimbot:CreateSlider({
-        Name = 'Prediction Multiplier',
-        Min = 0.8,
-        Max = 1.5,
-        Default = 1.1,
-        Increment = 0.05
-    })
-    
-    AdvancedTracking = ProjectileAimbot:CreateToggle({
-        Name = 'Advanced Movement Tracking',
-        Default = true,
-        Tooltip = 'Tracks player movement patterns to counter juking and building'
     })
 end)
 
