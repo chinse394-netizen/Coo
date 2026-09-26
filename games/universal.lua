@@ -30,7 +30,11 @@ local run = function(func)
 	if setthreadidentity then setthreadidentity(8) end
 	local suc, err = pcall(func)
 	if not suc and err then
-		warn('[Vape] Module error: '..tostring(err))
+		-- A game update can invalidate an optional integration.  Keep that
+		-- integration isolated so it cannot interrupt the rest of the client.
+		if shared.VapeDeveloper then
+			warn('[Vape] Disabled incompatible feature: '..tostring(err))
+		end
 	end
 end
 local queue_on_teleport = queue_on_teleport or function() end
