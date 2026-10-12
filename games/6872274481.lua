@@ -23082,7 +23082,7 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local ATTACKS_PER_TEN_SECONDS = 35
+	local ATTACKS_PER_TEN_SECONDS = 30
 	local ATTACK_INTERVAL = 10 / ATTACKS_PER_TEN_SECONDS
 	local AttackRemote = {FireServer = function() end}
 	local function isFuryPotionInUse()
@@ -23241,9 +23241,15 @@ run(function()
 							})
 
 							if #plrs > 0 and not isFuryPotionInUse() then
-								if lastTool ~= sword.tool then
-									switchItem(sword.tool, 0)
+								local handItem = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
+								if lastTool ~= sword.tool or (handItem and handItem.Value ~= sword.tool) then
+									local switched = switchItem(sword.tool, 0.08)
 									lastTool = sword.tool
+									if switched then
+										-- EquipItem is asynchronous.  Give the server one short tick to
+										-- accept the new weapon before sending an attack request.
+										nextAttack = math.max(nextAttack, tick() + 0.08)
+									end
 								end
 								local selfpos = root.Position
 								local flatFacing = root.CFrame.LookVector * Vector3.new(1, 0, 1)
@@ -23268,7 +23274,7 @@ run(function()
 										Attacking = true
 										store.KillauraTarget = v
 										if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled and not isFuryPotionInUse() then
-											AnimDelay = tick() + ATTACK_INTERVAL
+											AnimDelay = tick() + (10 / math.clamp(AttackRate.Value, 20, 35))
 											bedwars.SwordController:playSwordEffect(meta, false)
 											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
 												bedwars.ScytheController:playLocalAnimation()
@@ -23285,8 +23291,9 @@ run(function()
 									local actualRoot = (v.Character and v.Character.PrimaryPart) or v.RootPart
 									local now = tick()
 									if actualRoot and now >= nextAttack and not isFuryPotionInUse() then
+										local attackInterval = 10 / math.clamp(AttackRate.Value, 20, 35)
 										local late = now - nextAttack
-										nextAttack = (nextAttack == 0 or late > ATTACK_INTERVAL) and (now + ATTACK_INTERVAL) or (nextAttack + ATTACK_INTERVAL)
+										nextAttack = (nextAttack == 0 or late > attackInterval) and (now + attackInterval) or (nextAttack + attackInterval)
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 										local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
 										local sent = pcall(function()
@@ -23308,6 +23315,9 @@ run(function()
 											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
 											store.attackReachUpdate = tick() + 1
+										else
+											-- Do not wait out a full attack interval after a failed remote.
+											nextAttack = now + (1 / math.clamp(UpdateRate.Value, 60, 120))
 										end
 									end
 								end
@@ -23420,10 +23430,11 @@ run(function()
 	})
 	AttackRate = Killaura:CreateSlider({
 		Name = 'Attack attempts per 10s',
-		Min = 35,
+		Min = 20,
 		Max = 35,
-		Default = 35,
-		Suffix = ' hits'
+		Default = 30,
+		Suffix = ' hits',
+		Tooltip = '30 is the reliable default. Increase only if your server registers every hit.'
 	})
 	MaxTargets = Killaura:CreateSlider({
 		Name = 'Max targets',
