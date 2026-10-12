@@ -6955,8 +6955,8 @@ mainapi:Clean(notifications.ChildRemoved:Connect(function()
 	end
 end))
 
-mainapi:Clean(inputService.InputBegan:Connect(function(inputObj)
-	if not inputService:GetFocusedTextBox() and inputObj.KeyCode ~= Enum.KeyCode.Unknown then
+mainapi:Clean(inputService.InputBegan:Connect(function(inputObj, gameProcessedEvent)
+	if not gameProcessedEvent and not inputService:GetFocusedTextBox() and inputObj.KeyCode ~= Enum.KeyCode.Unknown then
 		table.insert(mainapi.HeldKeybinds, inputObj.KeyCode.Name)
 		if mainapi.Binding then return end
 
