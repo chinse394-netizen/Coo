@@ -23082,8 +23082,6 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local ATTACKS_PER_TEN_SECONDS = 30
-	local ATTACK_INTERVAL = 10 / ATTACKS_PER_TEN_SECONDS
 	local AttackRemote = {FireServer = function() end}
 	local function isFuryPotionInUse()
 		local hand = store.hand
@@ -23274,7 +23272,8 @@ run(function()
 										Attacking = true
 										store.KillauraTarget = v
 										if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled and not isFuryPotionInUse() then
-											AnimDelay = tick() + (10 / math.clamp(AttackRate.Value, 20, 35))
+											local swingInterval = math.max(10 / math.clamp(AttackRate.Value, 20, 35), tonumber(meta.sword.attackSpeed) or 0)
+											AnimDelay = tick() + swingInterval
 											bedwars.SwordController:playSwordEffect(meta, false)
 											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
 												bedwars.ScytheController:playLocalAnimation()
@@ -23286,16 +23285,20 @@ run(function()
 										end
 									end
 
-									if delta.Magnitude > AttackRange.Value then continue end
+									-- Keep the remote within the range the currently equipped sword
+									-- advertises. Drawing/target selection may extend farther, but firing
+									-- beyond this point produces a local swing with no server damage.
+									local serverRange = math.min(AttackRange.Value, tonumber(meta.sword.attackRange) or 14.4)
+									if delta.Magnitude > serverRange then continue end
 
 									local actualRoot = (v.Character and v.Character.PrimaryPart) or v.RootPart
 									local now = tick()
 									if actualRoot and now >= nextAttack and not isFuryPotionInUse() then
-										local attackInterval = 10 / math.clamp(AttackRate.Value, 20, 35)
+										local attackInterval = math.max(10 / math.clamp(AttackRate.Value, 20, 35), tonumber(meta.sword.attackSpeed) or 0)
 										local late = now - nextAttack
 										nextAttack = (nextAttack == 0 or late > attackInterval) and (now + attackInterval) or (nextAttack + attackInterval)
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
-										local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
+										local pos = selfpos + dir * math.max(delta.Magnitude - math.max(serverRange - 0.05, 0), 0)
 										local sent = pcall(function()
 											AttackRemote:FireServer({
 												weapon = sword.tool,
