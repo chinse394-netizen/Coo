@@ -23080,12 +23080,6 @@ run(function()
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local swordEffectFunction, swordEffectController
-	local targetRate = math.clamp(AttackRate.Value, 20, 35)
-	local rateInterval = 10 / targetRate
-	local swordCooldown = tonumber(meta.sword.attackSpeed) or 0
-print("Target interval:", rateInterval)
-print("Sword cooldown:", swordCooldown)
-print("Limiting interval:", math.max(rateInterval, swordCooldown))
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
 	local AttackRemote = {FireServer = function() end}
