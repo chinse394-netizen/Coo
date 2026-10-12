@@ -5200,6 +5200,7 @@ run(function()
 	local Targets
 	local FOV
 	local OtherProjectiles
+	local VelocityPrediction
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
 	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
@@ -5231,7 +5232,11 @@ run(function()
 							return old(...)
 						end
 	
+						local targetPart = plr[TargetPart.Value]
 						local meta = projmeta:getProjectileMeta()
+						if not targetPart or not meta then
+							return old(...)
+						end
 						local lifetime = (worldmeta and meta.predictionLifetimeSec or meta.lifetimeSec or 3)
 						local gravity = (meta.gravitationalAcceleration or 196.2) * projmeta.gravityMultiplier
 						local projSpeed = (meta.launchVelocity or 100)
@@ -5255,8 +5260,10 @@ run(function()
 							end
 						end
 	
-						local newlook = CFrame.new(offsetpos, plr[TargetPart.Value].Position) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
-						local calc = prediction.SolveTrajectory(newlook.p, projSpeed, gravity, plr[TargetPart.Value].Position, projmeta.projectile == 'telepearl' and Vector3.zero or plr[TargetPart.Value].Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
+						local velocity = targetPart.AssemblyLinearVelocity or targetPart.Velocity or Vector3.zero
+						velocity *= VelocityPrediction.Value / 100
+						local newlook = CFrame.new(offsetpos, targetPart.Position) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
+						local calc = prediction.SolveTrajectory(newlook.p, projSpeed, gravity, targetPart.Position, projmeta.projectile == 'telepearl' and Vector3.zero or velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
 						if calc then
 							targetinfo.Targets[plr] = tick() + 1
 							return {
@@ -5294,6 +5301,13 @@ run(function()
 	OtherProjectiles = ProjectileAimbot:CreateToggle({
 		Name = 'Other Projectiles',
 		Default = true
+	})
+	VelocityPrediction = ProjectileAimbot:CreateSlider({
+		Name = 'Velocity prediction',
+		Min = 0,
+		Max = 150,
+		Default = 100,
+		Suffix = '%'
 	})
 end)
 	
@@ -23071,6 +23085,18 @@ run(function()
 	local ATTACKS_PER_TEN_SECONDS = 35
 	local ATTACK_INTERVAL = 10 / ATTACKS_PER_TEN_SECONDS
 	local AttackRemote = {FireServer = function() end}
+	local function isFuryPotionInUse()
+		local hand = store.hand
+		local tool = hand and hand.tool
+		local itemName = hand and (hand.itemType or hand.Name) or (tool and tool.Name)
+		if type(itemName) ~= 'string' then
+			return false
+		end
+
+		itemName = itemName:lower()
+		return itemName:find('fury', 1, true) ~= nil and itemName:find('potion', 1, true) ~= nil
+	end
+
 	local function refreshAttackRemote()
 		local ok, remote = pcall(function()
 			return bedwars.Client:Get(remotes.AttackEntity).instance
@@ -23081,6 +23107,11 @@ run(function()
 	end
 
 	local function getAttackData()
+		-- Avoid re-equipping a sword while the Fury Potion consume animation is active.
+		if isFuryPotionInUse() then
+			return false
+		end
+
 		if Mouse.Enabled then
 			if not inputService:IsMouseButtonPressed(0) then return false end
 		end
@@ -23164,8 +23195,9 @@ run(function()
 									anims.Random = {{CFrame = CFrame.Angles(math.rad(math.random(1, 360)), math.rad(math.random(1, 360)), math.rad(math.random(1, 360))), Time = 0.12}}
 								end
 
-								for _, v in anims[AnimationMode.Value] do
-									AnimTween = tweenService:Create(gameCamera.Viewmodel.RightHand.RightWrist, TweenInfo.new(first and (AnimationTween.Enabled and 0.001 or 0.1) or v.Time / AnimationSpeed.Value, Enum.EasingStyle.Linear), {
+							local animationSpeed = math.max(AnimationSpeed.Value, 0.05)
+							for _, v in anims[AnimationMode.Value] or {} do
+								AnimTween = tweenService:Create(gameCamera.Viewmodel.RightHand.RightWrist, TweenInfo.new(first and (AnimationTween.Enabled and 0.001 or 0.1) or v.Time / animationSpeed, Enum.EasingStyle.Linear), {
 										C0 = armC0 * v.CFrame
 									})
 									AnimTween:Play()
@@ -23182,7 +23214,7 @@ run(function()
 							end
 
 							if not started then
-								task.wait(1 / UpdateRate.Value)
+								task.wait(1 / math.max(UpdateRate.Value, 1))
 							end
 						until (not Killaura.Enabled) or (not Animation.Enabled)
 					end)
@@ -23208,7 +23240,7 @@ run(function()
 								Sort = sortmethods[Sort.Value]
 							})
 
-							if #plrs > 0 then
+							if #plrs > 0 and not isFuryPotionInUse() then
 								if lastTool ~= sword.tool then
 									switchItem(sword.tool, 0)
 									lastTool = sword.tool
@@ -23235,10 +23267,10 @@ run(function()
 									if not Attacking then
 										Attacking = true
 										store.KillauraTarget = v
-										if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled then
-										AnimDelay = tick() + 10 / ATTACKS_PER_TEN_SECONDS
+										if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled and not isFuryPotionInUse() then
+											AnimDelay = tick() + ATTACK_INTERVAL
 											bedwars.SwordController:playSwordEffect(meta, false)
-											if meta.displayName:find(' Scythe') then
+											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
 												bedwars.ScytheController:playLocalAnimation()
 											end
 
@@ -23252,12 +23284,12 @@ run(function()
 
 									local actualRoot = (v.Character and v.Character.PrimaryPart) or v.RootPart
 									local now = tick()
-									if actualRoot and now >= nextAttack then
+									if actualRoot and now >= nextAttack and not isFuryPotionInUse() then
 										local late = now - nextAttack
 										nextAttack = (nextAttack == 0 or late > ATTACK_INTERVAL) and (now + ATTACK_INTERVAL) or (nextAttack + ATTACK_INTERVAL)
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 										local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
-										pcall(function()
+										local sent = pcall(function()
 											AttackRemote:FireServer({
 												weapon = sword.tool,
 												chargedAttack = {chargeRatio = 0},
@@ -23272,9 +23304,11 @@ run(function()
 												}
 											})
 										end)
-										bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-										store.attackReach = (delta.Magnitude * 100) // 1 / 100
-										store.attackReachUpdate = tick() + 1
+										if sent then
+											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
+											store.attackReach = (delta.Magnitude * 100) // 1 / 100
+											store.attackReachUpdate = tick() + 1
+										end
 									end
 								end
 							end
