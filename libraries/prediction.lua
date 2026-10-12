@@ -187,6 +187,11 @@ function module.solveQuartic(c0, c1, c2, c3, c4)
 end
 
 function module.SolveTrajectory(origin, projectileSpeed, gravity, targetPos, targetVelocity, playerGravity, playerHeight, playerJump, params)
+	if projectileSpeed <= eps then
+		return
+	end
+
+	targetVelocity = targetVelocity or Vector3.zero
 	local disp = targetPos - origin
 	local p, q, r = targetVelocity.X, targetVelocity.Y, targetVelocity.Z
 	local h, j, k = disp.X, disp.Y, disp.Z
@@ -221,13 +226,13 @@ function module.SolveTrajectory(origin, projectileSpeed, gravity, targetPos, tar
 		j*j + h*h + k*k
 	)
 	if solutions then
-		local posRoots = table.create(2)
-		for _, v in solutions do --filter out the negative roots
-			if v > 0 then
+		local posRoots = table.create(4)
+		for _, v in solutions do
+			if type(v) == 'number' and v > eps then
 				table.insert(posRoots, v)
 			end
 		end
-		posRoots[1] = posRoots[1]
+		table.sort(posRoots)
 		if posRoots[1] then
 			local t = posRoots[1]
 			local d = (h + p*t)/t
