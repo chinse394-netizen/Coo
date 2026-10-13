@@ -23285,8 +23285,8 @@ run(function()
 									local holdingSword = handItem and handItem.Value == sword.tool
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
-										local swordCooldown = tonumber(meta.sword.attackSpeed) or 0.3
-										local attackInterval = math.max(10 / math.clamp(AttackRate.Value, 20, 50), swordCooldown + (HitMargin.Value / 1000))
+										-- Client side cooldown: use the slider rate, not the sword's own cooldown.
+										local attackInterval = (10 / math.clamp(AttackRate.Value, 20, 50)) + (HitMargin.Value / 1000)
 										nextAttack = now + attackInterval
 										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
@@ -23436,17 +23436,17 @@ run(function()
 		Name = 'Attack attempts per 10s',
 		Min = 20,
 		Max = 50,
-		Default = 50,
+		Default = 35,
 		Suffix = ' hits',
-		Tooltip = 'Speed cap only. Your sword cooldown sets the real max (0.3s sword = 33 hits).'
+		Tooltip = 'Hits per 10s. Raise until hits stop registering, then go back down 1.'
 	})
 	HitMargin = Killaura:CreateSlider({
 		Name = 'Hit margin',
 		Min = 0,
 		Max = 40,
-		Default = 6,
+		Default = 0,
 		Suffix = 'ms',
-		Tooltip = 'Extra wait after the sword cooldown.\nLower = faster but more rejected hits.'
+		Tooltip = 'Extra wait added to each hit.\nRaise it if you still get ghost hits.'
 	})
 	MaxTargets = Killaura:CreateSlider({
 		Name = 'Max targets',
