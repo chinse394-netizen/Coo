@@ -23442,7 +23442,7 @@ run(function()
 	})
 	HitMargin = Killaura:CreateSlider({
 		Name = 'Hit margin',
-		Min = -10,
+		Min = -30,
 		Max = 40,
 		Default = 0,
 		Suffix = 'ms',
