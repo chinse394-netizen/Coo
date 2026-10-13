@@ -23060,6 +23060,8 @@ run(function()
 	local UpdateRate
 	local AttackRate
 	local HitMargin
+	local UncapFPS
+	local oldFpsCap
 	local AngleSlider
 	local MaxTargets
 	local Mouse
@@ -23140,6 +23142,13 @@ run(function()
 		Name = 'KillauraV2',
 		Function = function(callback)
 			if callback then
+				-- Executor API: setfpscap / getfpscap. Not on every executor.
+				if UncapFPS.Enabled and setfpscap then
+					pcall(function()
+						oldFpsCap = getfpscap and getfpscap() or nil
+						setfpscap(1000)
+					end)
+				end
 				refreshAttackRemote()
 				task.spawn(function()
 					repeat
@@ -23357,6 +23366,10 @@ run(function()
 					task.wait(1 / math.clamp(UpdateRate.Value * 2, 120, 240))
 				until not Killaura.Enabled
 			else
+				if oldFpsCap and setfpscap then
+					pcall(setfpscap, oldFpsCap)
+				end
+				oldFpsCap = nil
 				Attacking = false
 				if AnimTween then
 					AnimTween:Cancel()
@@ -23448,6 +23461,11 @@ run(function()
 		Default = 0,
 		Suffix = 'ms',
 		Tooltip = 'ms added to each hit.\nNegative = faster, more rejected hits.\nPositive = slower, safer.'
+	})
+	UncapFPS = Killaura:CreateToggle({
+		Name = 'Uncap FPS',
+		Default = true,
+		Tooltip = 'Sets the FPS cap to 1000 while on.\nMore FPS = hits leave closer to on time.'
 	})
 	MaxTargets = Killaura:CreateSlider({
 		Name = 'Max targets',
