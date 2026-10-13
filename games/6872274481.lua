@@ -23059,6 +23059,7 @@ run(function()
 	local ChargeTime
 	local UpdateRate
 	local AttackRate
+	local HitMargin
 	local AngleSlider
 	local MaxTargets
 	local Mouse
@@ -23284,9 +23285,9 @@ run(function()
 									local holdingSword = handItem and handItem.Value == sword.tool
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
-										local attackInterval = math.max(10 / math.clamp(AttackRate.Value, 20, 34), tonumber(meta.sword.attackSpeed) or 0)
-										local late = now - nextAttack
-										nextAttack = (nextAttack == 0 or late > attackInterval) and (now + attackInterval) or (nextAttack + attackInterval)
+										local swordCooldown = tonumber(meta.sword.attackSpeed) or 0.3
+										local attackInterval = math.max(10 / math.clamp(AttackRate.Value, 20, 50), swordCooldown + (HitMargin.Value / 1000))
+										nextAttack = now + attackInterval
 										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
 											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
@@ -23434,10 +23435,18 @@ run(function()
 	AttackRate = Killaura:CreateSlider({
 		Name = 'Attack attempts per 10s',
 		Min = 20,
-		Max = 34,
-		Default = 34,
+		Max = 50,
+		Default = 50,
 		Suffix = ' hits',
-		Tooltip = '34 is the server max. Going higher only makes ghost hits.'
+		Tooltip = 'Speed cap only. Your sword cooldown sets the real max (0.3s sword = 33 hits).'
+	})
+	HitMargin = Killaura:CreateSlider({
+		Name = 'Hit margin',
+		Min = 0,
+		Max = 40,
+		Default = 6,
+		Suffix = 'ms',
+		Tooltip = 'Extra wait after the sword cooldown.\nLower = faster but more rejected hits.'
 	})
 	MaxTargets = Killaura:CreateSlider({
 		Name = 'Max targets',
