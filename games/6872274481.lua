@@ -23287,7 +23287,8 @@ run(function()
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
 										-- Same timing as KillauraOLD: sword cooldown with a 34 per 10s floor.
 										local attackInterval = math.max(math.max(tonumber(meta.sword.attackSpeed) or 0.3, 10 / math.clamp(AttackRate.Value, 20, 50)) + (HitMargin.Value / 1000), 0.25)
-										nextAttack = now + attackInterval
+										-- Take back the time lost to frame delay, but never more than 6ms.
+										nextAttack = math.max(nextAttack + attackInterval, now + attackInterval - 0.006)
 										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
 											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
@@ -23353,7 +23354,7 @@ run(function()
 						store.KillauraTarget = nil
 					end
 
-					task.wait(1 / math.clamp(UpdateRate.Value, 60, 120))
+					task.wait(1 / math.clamp(UpdateRate.Value * 2, 120, 240))
 				until not Killaura.Enabled
 			else
 				Attacking = false
