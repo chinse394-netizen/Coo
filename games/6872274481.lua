@@ -23271,18 +23271,6 @@ run(function()
 									if not Attacking then
 										Attacking = true
 										store.KillauraTarget = v
-										if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled and not isFuryPotionInUse() then
-											local swingInterval = math.max(10 / math.clamp(AttackRate.Value, 20, 35), tonumber(meta.sword.attackSpeed) or 0)
-											AnimDelay = tick() + swingInterval
-											bedwars.SwordController:playSwordEffect(meta, false)
-											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
-												bedwars.ScytheController:playLocalAnimation()
-											end
-
-											if vape.ThreadFix then
-												setthreadidentity(8)
-											end
-										end
 									end
 
 									-- Keep the remote within the range the currently equipped sword
@@ -23293,10 +23281,22 @@ run(function()
 
 									local actualRoot = (v.Character and v.Character.PrimaryPart) or v.RootPart
 									local now = tick()
-									if actualRoot and now >= nextAttack and not isFuryPotionInUse() then
-										local attackInterval = math.max(10 / math.clamp(AttackRate.Value, 20, 35), tonumber(meta.sword.attackSpeed) or 0)
+									local holdingSword = handItem and handItem.Value == sword.tool
+									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
+									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
+										local attackInterval = math.max(10 / math.clamp(AttackRate.Value, 20, 34), tonumber(meta.sword.attackSpeed) or 0)
 										local late = now - nextAttack
 										nextAttack = (nextAttack == 0 or late > attackInterval) and (now + attackInterval) or (nextAttack + attackInterval)
+										if not Swing.Enabled and not LegitAura.Enabled then
+											bedwars.SwordController:playSwordEffect(meta, false)
+											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
+												bedwars.ScytheController:playLocalAnimation()
+											end
+
+											if vape.ThreadFix then
+												setthreadidentity(8)
+											end
+										end
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 										local pos = selfpos + dir * math.max(delta.Magnitude - math.max(serverRange - 0.05, 0), 0)
 										local sent = pcall(function()
@@ -23434,10 +23434,10 @@ run(function()
 	AttackRate = Killaura:CreateSlider({
 		Name = 'Attack attempts per 10s',
 		Min = 20,
-		Max = 35,
-		Default = 30,
+		Max = 34,
+		Default = 34,
 		Suffix = ' hits',
-		Tooltip = '30 is the reliable default. Increase only if your server registers every hit.'
+		Tooltip = '34 is the server max. Going higher only makes ghost hits.'
 	})
 	MaxTargets = Killaura:CreateSlider({
 		Name = 'Max targets',
