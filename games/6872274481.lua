@@ -23060,8 +23060,6 @@ run(function()
 	local UpdateRate
 	local AttackRate
 	local HitMargin
-	local AutoTune
-	local tunedExtra, acceptStreak = 0, 0
 	local AngleSlider
 	local MaxTargets
 	local Mouse
@@ -23142,7 +23140,6 @@ run(function()
 		Name = 'KillauraV2',
 		Function = function(callback)
 			if callback then
-				tunedExtra, acceptStreak = 0, 0
 				refreshAttackRemote()
 				task.spawn(function()
 					repeat
@@ -23288,8 +23285,8 @@ run(function()
 									local holdingSword = handItem and handItem.Value == sword.tool
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
-										-- Client side cooldown: use the slider rate, not the sword's own cooldown.
-										local attackInterval = (10 / math.clamp(AttackRate.Value, 20, 50)) + (HitMargin.Value / 1000) + tunedExtra
+										-- Same timing as KillauraOLD: sword cooldown with a 34 per 10s floor.
+										local attackInterval = math.max(tonumber(meta.sword.attackSpeed) or 0.3, 10 / math.clamp(AttackRate.Value, 20, 50)) + (HitMargin.Value / 1000)
 										nextAttack = now + attackInterval
 										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
@@ -23322,24 +23319,6 @@ run(function()
 											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
 											store.attackReachUpdate = tick() + 1
-											if AutoTune.Enabled and v.Health then
-												local trackedTarget = v
-												local healthBefore = v.Health
-												task.delay(0.3, function()
-													if not Killaura.Enabled then return end
-													if not (trackedTarget.Character and trackedTarget.Character.Parent) then return end
-													if (trackedTarget.Health or healthBefore) < healthBefore then
-														acceptStreak += 1
-														if acceptStreak >= 5 then
-															acceptStreak = 0
-															tunedExtra = math.max(tunedExtra - 0.001, 0)
-														end
-													else
-														acceptStreak = 0
-														tunedExtra = math.min(tunedExtra + 0.004, 0.06)
-													end
-												end)
-											end
 										else
 											-- Do not wait out a full attack interval after a failed remote.
 											nextAttack = now + (1 / math.clamp(UpdateRate.Value, 60, 120))
@@ -23457,14 +23436,9 @@ run(function()
 		Name = 'Attack attempts per 10s',
 		Min = 20,
 		Max = 50,
-		Default = 36,
+		Default = 34,
 		Suffix = ' hits',
-		Tooltip = 'Hits per 10s. Raise until hits stop registering, then go back down 1.'
-	})
-	AutoTune = Killaura:CreateToggle({
-		Name = 'Auto tune hits',
-		Default = true,
-		Tooltip = 'Slows down a little when hits get rejected,\nspeeds back up when they land.'
+		Tooltip = 'Speed cap. Your sword cooldown sets the real max.'
 	})
 	HitMargin = Killaura:CreateSlider({
 		Name = 'Hit margin',
