@@ -5201,15 +5201,163 @@ run(function()
 	local FOV
 	local OtherProjectiles
 	local VelocityPrediction
+	local BlockCheck
+	local PingComp
+	local FPSComp
+	local InterpDelay
+	local ProjectileAimbot
+	local old
+	local frameTime = 1 / 60
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
-	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
-	local old
-	
-	local ProjectileAimbot = vape.Categories.Blatant:CreateModule({
+	rayCheck.RespectCanCollide = true
+
+	local function refreshRayFilter()
+		local map = workspace:FindFirstChild('Map')
+		rayCheck.FilterDescendantsInstances = map and {map} or {}
+	end
+
+	local function getPingSeconds()
+		local success, value = pcall(function()
+			return game:GetService('Stats').Network.ServerStatsItem['Data Ping']:GetValue()
+		end)
+		if success and type(value) == 'number' then
+			return value / 1000
+		end
+		return 0
+	end
+
+	local function getLeadTime()
+		local lead = 0
+		if PingComp.Enabled then
+			lead += (getPingSeconds() / 2) + (InterpDelay.Value / 1000) - 0.045
+		end
+		if FPSComp.Enabled then
+			lead += frameTime
+		end
+		return math.clamp(lead, 0, 0.4)
+	end
+
+	local function getFlightTime(origin, aim, direction, speed)
+		local flatDistance = Vector3.new(aim.X - origin.X, 0, aim.Z - origin.Z).Magnitude
+		local flatSpeed = Vector3.new(direction.X, 0, direction.Z).Magnitude * speed
+		if flatSpeed < 0.01 then
+			return nil
+		end
+		return flatDistance / flatSpeed
+	end
+
+	local function getBlockedTime(origin, direction, speed, gravity, flightTime)
+		local startVelocity = direction * speed
+		local endTime = flightTime * 0.985
+		local steps = math.clamp(math.ceil(endTime / 0.035), 8, 48)
+		local previous = origin
+		for step = 1, steps do
+			local t = endTime * step / steps
+			local position = origin + startVelocity * t - Vector3.new(0, 0.5 * gravity * t * t, 0)
+			local result = workspace:Raycast(previous, position - previous, rayCheck)
+			if result and not collectionService:HasTag(result.Instance, 'DontBlockProjectileRaycast') then
+				return t
+			end
+			previous = position
+		end
+		return nil
+	end
+
+	local function solveArcs(origin, speed, gravity, targetPos, targetVelocity)
+		local results = {}
+		local disp = targetPos - origin
+
+		if gravity <= 0 then
+			local t = disp.Magnitude / speed
+			for _ = 1, 3 do
+				t = ((targetPos + targetVelocity * t) - origin).Magnitude / speed
+			end
+			if t > 0 then
+				table.insert(results, {time = t, aim = targetPos + targetVelocity * t})
+			end
+			return results
+		end
+
+		local p, q, r = targetVelocity.X, targetVelocity.Y, targetVelocity.Z
+		local h, j, k = disp.X, disp.Y, disp.Z
+		local l = -0.5 * gravity
+		local roots = prediction.solveQuartic(
+			l * l,
+			-2 * q * l,
+			q * q - 2 * j * l - speed * speed + p * p + r * r,
+			2 * j * q + 2 * h * p + 2 * k * r,
+			j * j + h * h + k * k
+		)
+		if not roots then
+			return results
+		end
+
+		for index = 1, 4 do
+			local t = roots[index]
+			if t and t > 0.02 then
+				local offset = Vector3.new((h + p * t) / t, (j + q * t - l * t * t) / t, (k + r * t) / t)
+				table.insert(results, {time = t, aim = origin + offset})
+			end
+		end
+		table.sort(results, function(a, b)
+			return a.time < b.time
+		end)
+		return results
+	end
+
+	local function chooseAim(origin, speed, gravity, lifetime, targetPart, rootPart, velocity, lead, libraryAim, libraryDirection)
+		if libraryAim and libraryDirection then
+			local libraryTime = getFlightTime(origin, libraryAim, libraryDirection, speed)
+			if libraryTime and libraryTime <= lifetime then
+				if not getBlockedTime(origin, libraryDirection, speed, gravity, libraryTime) then
+					return libraryDirection
+				end
+			end
+		end
+
+		local flat = Vector3.new(rootPart.Position.X - origin.X, 0, rootPart.Position.Z - origin.Z)
+		if flat.Magnitude < 0.01 then
+			flat = Vector3.new(0, 0, 1)
+		end
+		local side = Vector3.new(0, 1, 0):Cross(flat.Unit) * 1
+		local root = rootPart.Position
+		local points = {
+			targetPart.Position,
+			root + Vector3.new(0, 1.5, 0),
+			root + side,
+			root - side,
+			root + Vector3.new(0, -1.6, 0),
+			root + side + Vector3.new(0, 1.2, 0),
+			root - side + Vector3.new(0, 1.2, 0)
+		}
+
+		for arcIndex = 1, 2 do
+			for _, point in points do
+				local futurePoint = point + velocity * lead
+				local arcs = solveArcs(origin, speed, gravity, futurePoint, velocity)
+				local arc = arcs[arcIndex]
+				if arc and arc.time <= lifetime then
+					local direction = (arc.aim - origin).Unit
+					if not getBlockedTime(origin, direction, speed, gravity, arc.time) then
+						return direction
+					end
+				end
+			end
+		end
+
+		return nil
+	end
+
+	ProjectileAimbot = vape.Categories.Blatant:CreateModule({
 		Name = 'ProjectileAimbot',
 		Function = function(callback)
 			if callback then
+				refreshRayFilter()
+				ProjectileAimbot:Clean(runService.RenderStepped:Connect(function(dt)
+					frameTime = frameTime + (math.min(dt, 0.25) - frameTime) * 0.1
+				end))
+
 				old = bedwars.ProjectileController.calculateImportantLaunchValues
 				bedwars.ProjectileController.calculateImportantLaunchValues = function(...)
 					local self, projmeta, worldmeta, origin, shootpos = ...
@@ -5221,37 +5369,47 @@ run(function()
 						Wallcheck = Targets.Walls.Enabled,
 						Origin = entitylib.isAlive and (shootpos or entitylib.character.RootPart.Position) or Vector3.zero
 					})
-	
+
 					if plr then
 						local pos = shootpos or self:getLaunchPosition(origin)
 						if not pos then
 							return old(...)
 						end
-	
+
 						if (not OtherProjectiles.Enabled) and not projmeta.projectile:find('arrow') then
 							return old(...)
 						end
-	
+
 						local targetPart = plr[TargetPart.Value]
 						local meta = projmeta:getProjectileMeta()
 						if not targetPart or not meta then
 							return old(...)
 						end
+
+						local overrides
+						if meta.getProjectileOverridesFunction then
+							local success, result = pcall(meta.getProjectileOverridesFunction, projmeta.player)
+							if success then
+								overrides = result
+							end
+						end
+
 						local lifetime = (worldmeta and meta.predictionLifetimeSec or meta.lifetimeSec or 3)
 						local gravity = (meta.gravitationalAcceleration or 196.2) * projmeta.gravityMultiplier
-						local projSpeed = (meta.launchVelocity or 100)
+						local baseSpeed = (overrides and overrides.launchVelocityOverride) or meta.launchVelocity or 100
+						local projSpeed = baseSpeed * (projmeta.velocityMultiplier or 1)
 						local offsetpos = pos + (projmeta.projectile == 'owl_projectile' and Vector3.zero or projmeta.fromPositionOffset)
 						local balloons = plr.Character:GetAttribute('InflatedBalloons')
 						local playerGravity = workspace.Gravity
-	
+
 						if balloons and balloons > 0 then
 							playerGravity = (workspace.Gravity * (1 - ((balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))))
 						end
-	
+
 						if plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
 							playerGravity = 6
 						end
-	
+
 						if plr.Player:GetAttribute('IsOwlTarget') then
 							for _, owl in collectionService:GetTagged('Owl') do
 								if owl:GetAttribute('Target') == plr.Player.UserId and owl:GetAttribute('Status') == 2 then
@@ -5259,15 +5417,28 @@ run(function()
 								end
 							end
 						end
-	
+
+						local isTelepearl = projmeta.projectile == 'telepearl'
 						local velocity = targetPart.AssemblyLinearVelocity or targetPart.Velocity or Vector3.zero
 						velocity *= VelocityPrediction.Value / 100
-						local newlook = CFrame.new(offsetpos, targetPart.Position) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
-						local calc = prediction.SolveTrajectory(newlook.p, projSpeed, gravity, targetPart.Position, projmeta.projectile == 'telepearl' and Vector3.zero or velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
-						if calc then
+						if isTelepearl then
+							velocity = Vector3.zero
+						end
+
+						refreshRayFilter()
+						local lead = isTelepearl and 0 or getLeadTime()
+						local leadPosition = targetPart.Position + velocity * lead
+						local libraryAim = prediction.SolveTrajectory(offsetpos, projSpeed, gravity, leadPosition, velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
+						local direction = libraryAim and (libraryAim - offsetpos).Unit
+
+						if BlockCheck.Enabled and plr.RootPart then
+							direction = chooseAim(offsetpos, projSpeed, gravity, lifetime, targetPart, plr.RootPart, velocity, lead, libraryAim, direction) or direction
+						end
+
+						if direction then
 							targetinfo.Targets[plr] = tick() + 1
 							return {
-								initialVelocity = CFrame.new(newlook.Position, calc).LookVector * projSpeed,
+								initialVelocity = direction * projSpeed,
 								positionFrom = offsetpos,
 								deltaT = lifetime,
 								gravitationalAcceleration = gravity,
@@ -5275,7 +5446,7 @@ run(function()
 							}
 						end
 					end
-	
+
 					return old(...)
 				end
 			else
@@ -5308,6 +5479,29 @@ run(function()
 		Max = 150,
 		Default = 100,
 		Suffix = '%'
+	})
+	BlockCheck = ProjectileAimbot:CreateToggle({
+		Name = 'Block check',
+		Default = true,
+		Tooltip = 'If blocks are in the way, aims at another body spot\nor lobs the shot over or around them.'
+	})
+	PingComp = ProjectileAimbot:CreateToggle({
+		Name = 'Ping compensation',
+		Default = true,
+		Tooltip = 'Leads the target more when your ping is high.'
+	})
+	FPSComp = ProjectileAimbot:CreateToggle({
+		Name = 'FPS compensation',
+		Default = true,
+		Tooltip = 'Leads the target more when your FPS is low.'
+	})
+	InterpDelay = ProjectileAimbot:CreateSlider({
+		Name = 'Interpolation delay',
+		Min = 0,
+		Max = 200,
+		Default = 60,
+		Suffix = 'ms',
+		Tooltip = 'How far behind other players look on your screen.\nRaise it if shots land behind moving targets.'
 	})
 end)
 	
