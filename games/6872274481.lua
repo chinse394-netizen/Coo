@@ -5207,6 +5207,10 @@ run(function()
 	local InterpDelay
 	local LearnMoves
 	local JukeGuard
+	local SmoothVel
+	local AccuracyLog
+	local lastAim
+	local shotStats = {hits = 0, total = 0}
 	local ProjectileAimbot
 	local old
 	local frameTime = 1 / 60
@@ -5342,7 +5346,20 @@ run(function()
 			end
 		end
 
-		pushLimited(samples, {t = now, p = pos, v = vel}, 80)
+		local trackedVel = vel
+		if SmoothVel.Enabled then
+			for index = #samples, 1, -1 do
+				local gap = now - samples[index].t
+				if gap >= 0.08 then
+					if gap <= 0.3 then
+						local derived = (pos - samples[index].p) / gap
+						trackedVel = Vector3.new((vel.X + derived.X) / 2, vel.Y, (vel.Z + derived.Z) / 2)
+					end
+					break
+				end
+			end
+		end
+		pushLimited(samples, {t = now, p = pos, v = trackedVel}, 80)
 		updateRatios(profile, now, pos)
 
 		local pending = profile.pending
@@ -5738,6 +5755,8 @@ run(function()
 		Function = function(callback)
 			if callback then
 				refreshRayFilter()
+				shotStats.hits = 0
+				shotStats.total = 0
 				ProjectileAimbot:Clean(runService.RenderStepped:Connect(function(dt)
 					frameTime = frameTime + (math.min(dt, 0.25) - frameTime) * 0.1
 				end))
@@ -5761,6 +5780,25 @@ run(function()
 						end
 						local shooter = data.shooter
 						local now = os.clock()
+						local character = lplr.Character
+						local own = character ~= nil and (shooter == character or shooter == lplr or (typeof(shooter) == 'Instance' and shooter:IsDescendantOf(character)))
+						if own then
+							if AccuracyLog.Enabled and lastAim and now - lastAim.time < 0.5 and lastAim.ent.Health then
+								local aim = lastAim
+								local healthBefore = aim.ent.Health
+								lastAim = nil
+								task.delay(math.clamp(aim.flight, 0.1, 3) + 0.8, function()
+									shotStats.total += 1
+									if (aim.ent.Health or healthBefore) < healthBefore then
+										shotStats.hits += 1
+									end
+									if shotStats.total % 5 == 0 then
+										notif('ProjectileAimbot', string.format('Arrow hits: %d/%d (%d%%)', shotStats.hits, shotStats.total, math.floor(shotStats.hits / shotStats.total * 100)), 5)
+									end
+								end)
+							end
+							return
+						end
 						for _, ent in entitylib.List do
 							if ent.Player and ent.Player ~= lplr then
 								local match = ent.Character == shooter or ent.Player == shooter
@@ -5838,6 +5876,13 @@ run(function()
 
 						local isTelepearl = projmeta.projectile == 'telepearl'
 						local velocity = targetPart.AssemblyLinearVelocity or targetPart.Velocity or Vector3.zero
+						local trackedProfile = plr.Player and profiles[plr.Player]
+						if SmoothVel.Enabled and trackedProfile then
+							local tracked = trackedProfile.samples[#trackedProfile.samples]
+							if tracked and os.clock() - tracked.t < 0.08 then
+								velocity = tracked.v
+							end
+						end
 						local scale = VelocityPrediction.Value / 100
 						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
 						if isTelepearl then
@@ -5891,6 +5936,9 @@ run(function()
 
 						if direction then
 							targetinfo.Targets[plr] = tick() + 1
+							if plr.RootPart then
+								lastAim = {ent = plr, time = os.clock(), flight = (plr.RootPart.Position - offsetpos).Magnitude / projSpeed}
+							end
 							return {
 								initialVelocity = direction * projSpeed,
 								positionFrom = offsetpos,
@@ -5943,6 +5991,16 @@ run(function()
 		Name = 'Learn movement',
 		Default = true,
 		Tooltip = 'Watches every player. Learns jump, tower, strafe\nand what they do after they shoot.'
+	})
+	SmoothVel = ProjectileAimbot:CreateToggle({
+		Name = 'Smooth velocity',
+		Default = true,
+		Tooltip = 'Mixes the replicated speed with the speed seen on your screen.\nTurn off if shots get worse.'
+	})
+	AccuracyLog = ProjectileAimbot:CreateToggle({
+		Name = 'Accuracy log',
+		Default = true,
+		Tooltip = 'Shows your arrow hit count every 5 shots.\nA hit means the target lost health after your shot.'
 	})
 	JukeGuard = ProjectileAimbot:CreateToggle({
 		Name = 'Juke guard',
