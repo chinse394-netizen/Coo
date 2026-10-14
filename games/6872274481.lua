@@ -5205,16 +5205,24 @@ run(function()
 	local PingComp
 	local FPSComp
 	local InterpDelay
+	local LearnMoves
 	local ProjectileAimbot
 	local old
 	local frameTime = 1 / 60
+	local profiles = setmetatable({}, {__mode = 'k'})
+	local simCache = setmetatable({}, {__mode = 'k'})
+	local JUMP_VELOCITY = 42.6
+	local SIM_STEP = 1 / 30
+	local SIM_STEPS = 66
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
 	rayCheck.RespectCanCollide = true
+	local hasMap = false
 
 	local function refreshRayFilter()
 		local map = workspace:FindFirstChild('Map')
 		rayCheck.FilterDescendantsInstances = map and {map} or {}
+		hasMap = map ~= nil
 	end
 
 	local function getPingSeconds()
@@ -5238,13 +5246,323 @@ run(function()
 		return math.clamp(lead, 0, 0.4)
 	end
 
-	local function getFlightTime(origin, aim, direction, speed)
-		local flatDistance = Vector3.new(aim.X - origin.X, 0, aim.Z - origin.Z).Magnitude
-		local flatSpeed = Vector3.new(direction.X, 0, direction.Z).Magnitude * speed
-		if flatSpeed < 0.01 then
+	local function flatten(vector)
+		return Vector3.new(vector.X, 0, vector.Z)
+	end
+
+	local function pushLimited(list, value, limit)
+		table.insert(list, value)
+		if #list > limit then
+			table.remove(list, 1)
+		end
+	end
+
+	local function getProfile(player)
+		local profile = profiles[player]
+		if not profile then
+			profile = {
+				samples = {},
+				air = false,
+				jumpStarts = {},
+				landings = {},
+				flips = {},
+				heading = nil,
+				headingTime = 0,
+				lastShot = 0,
+				pending = nil,
+				reactions = {}
+			}
+			profiles[player] = profile
+		end
+		return profile
+	end
+
+	local function trackEntity(ent, now)
+		local profile = getProfile(ent.Player)
+		local samples = profile.samples
+		local last = samples[#samples]
+		if last and now - last.t < 0.025 then
+			return
+		end
+
+		local pos = ent.RootPart.Position
+		local vel = ent.RootPart.AssemblyLinearVelocity
+		local air = ent.Humanoid ~= nil and ent.Humanoid.FloorMaterial == Enum.Material.Air
+
+		if air and not profile.air and vel.Y > 12 then
+			pushLimited(profile.jumpStarts, {t = now, y = pos.Y}, 8)
+		elseif profile.air and not air then
+			pushLimited(profile.landings, {t = now, y = pos.Y}, 8)
+		end
+		profile.air = air
+
+		local flat = flatten(vel)
+		if flat.Magnitude > 5 then
+			local unit = flat.Unit
+			if not profile.heading then
+				profile.heading = unit
+				profile.headingTime = now
+			elseif now - profile.headingTime > 0.1 then
+				local lastFlip = profile.flips[#profile.flips] or 0
+				if profile.heading:Dot(unit) < -0.3 and now - lastFlip > 0.12 then
+					pushLimited(profile.flips, now, 8)
+				end
+				profile.heading = unit
+				profile.headingTime = now
+			end
+		end
+
+		pushLimited(samples, {t = now, p = pos, v = vel}, 80)
+
+		local pending = profile.pending
+		if pending then
+			local since = now - pending.t
+			if since > 1.2 then
+				if pending.preSpeed > 3 and pending.n > 0 then
+					local postSpeed = pending.speedSum / pending.n
+					local ratio = math.clamp(postSpeed / pending.preSpeed, 0, 2)
+					local dot = 0
+					if pending.dirSum.Magnitude > 0.01 and pending.preDir then
+						dot = math.clamp(pending.dirSum.Unit:Dot(pending.preDir), -1, 1)
+					end
+					pushLimited(profile.reactions, {ratio = ratio, dot = dot}, 6)
+				end
+				profile.pending = nil
+			elseif since > 0.1 then
+				pending.speedSum += flat.Magnitude
+				pending.dirSum += flat
+				pending.n += 1
+			end
+		end
+	end
+
+	local function registerShot(ent, now)
+		local profile = getProfile(ent.Player)
+		profile.lastShot = now
+		local preSpeed = 0
+		local preDir = Vector3.zero
+		local count = 0
+		for index = #profile.samples, 1, -1 do
+			local sample = profile.samples[index]
+			if now - sample.t > 0.4 then
+				break
+			end
+			local flat = flatten(sample.v)
+			preSpeed += flat.Magnitude
+			preDir += flat
+			count += 1
+		end
+		if count == 0 then
+			return
+		end
+		profile.pending = {
+			t = now,
+			preSpeed = preSpeed / count,
+			preDir = preDir.Magnitude > 0.01 and preDir.Unit or nil,
+			speedSum = 0,
+			dirSum = Vector3.zero,
+			n = 0
+		}
+	end
+
+	local function getReactionFactor(profile, now)
+		if #profile.reactions < 2 or now - profile.lastShot > 1.2 then
+			return 1
+		end
+		local ratioSum = 0
+		local dotSum = 0
+		for _, reaction in profile.reactions do
+			ratioSum += reaction.ratio
+			dotSum += reaction.dot
+		end
+		local count = #profile.reactions
+		return math.clamp((ratioSum / count) * (dotSum / count), -1, 1.3)
+	end
+
+	local function getHopPattern(profile, now)
+		local jumps = profile.jumpStarts
+		local count = #jumps
+		if count < 3 or now - jumps[count].t > 1.5 then
 			return nil
 		end
-		return flatDistance / flatSpeed
+		local firstIndex = math.max(1, count - 3)
+		local first = jumps[firstIndex]
+		local cycles = count - firstIndex
+		local span = jumps[count].t - first.t
+		if cycles < 2 or span <= 0 or span / cycles > 1.1 then
+			return nil
+		end
+
+		local rise = (jumps[count].y - first.y) / cycles
+		if rise < 1.2 then
+			rise = 0
+		end
+
+		local holdSum = 0
+		local holdCount = 0
+		for _, land in profile.landings do
+			for _, jump in jumps do
+				if jump.t >= land.t and jump.t - land.t < 0.5 then
+					holdSum += jump.t - land.t
+					holdCount += 1
+					break
+				end
+			end
+		end
+
+		return {
+			rise = math.min(rise, 4),
+			hold = holdCount > 0 and holdSum / holdCount or 0.05,
+			last = jumps[count]
+		}
+	end
+
+	local function getStrafePattern(profile, now)
+		local flips = profile.flips
+		local count = #flips
+		if count < 4 or now - flips[count] > 1.2 then
+			return nil
+		end
+		local gaps = {
+			flips[count] - flips[count - 1],
+			flips[count - 1] - flips[count - 2],
+			flips[count - 2] - flips[count - 3]
+		}
+		local mean = (gaps[1] + gaps[2] + gaps[3]) / 3
+		if mean < 0.15 or mean > 1.2 then
+			return nil
+		end
+		for _, gap in gaps do
+			if math.abs(gap - mean) > mean * 0.35 then
+				return nil
+			end
+		end
+		return {period = mean, last = flips[count]}
+	end
+
+	local function simulatePath(ent, profile, velocity, now, playerGravity, reactionFactor)
+		local hip = ent.HipHeight or 3
+		local pos = ent.RootPart.Position
+		local hVel = flatten(velocity)
+		local vy = velocity.Y
+		local air = ent.Humanoid ~= nil and ent.Humanoid.FloorMaterial == Enum.Material.Air
+		if math.abs(vy) > 1.5 then
+			air = true
+		end
+
+		local hop = profile and LearnMoves.Enabled and getHopPattern(profile, now) or nil
+		local strafe = profile and LearnMoves.Enabled and getStrafePattern(profile, now) or nil
+		local towerRootY
+		local virtual = false
+		local jumpAt
+
+		if hop then
+			if air then
+				if hop.rise > 0 then
+					towerRootY = hop.last.y + hop.rise
+				end
+			else
+				local land = profile.landings[#profile.landings]
+				if land and land.t >= hop.last.t then
+					jumpAt = math.max(0, land.t + hop.hold - now)
+				else
+					jumpAt = 0.05
+				end
+				virtual = hop.rise > 0
+			end
+		end
+
+		local nextFlip
+		if strafe then
+			nextFlip = strafe.last + strafe.period
+			while nextFlip < now do
+				nextFlip += strafe.period
+			end
+		end
+
+		local path = {pos}
+		for step = 1, SIM_STEPS do
+			local t = step * SIM_STEP
+
+			if nextFlip and now + t >= nextFlip then
+				hVel = -hVel
+				nextFlip += strafe.period
+			end
+			local ramp = math.clamp(t / 0.4, 0, 1)
+			local moveH = hVel * (1 + (reactionFactor - 1) * ramp)
+
+			if not air and jumpAt and t >= jumpAt then
+				air = true
+				vy = JUMP_VELOCITY
+				jumpAt = nil
+				virtual = false
+				if hop and hop.rise > 0 then
+					towerRootY = pos.Y + hop.rise
+				end
+			end
+
+			if air then
+				vy -= playerGravity * SIM_STEP
+			end
+
+			local newPos = pos + Vector3.new(moveH.X * SIM_STEP, vy * SIM_STEP, moveH.Z * SIM_STEP)
+
+			if hasMap then
+				local flatMove = Vector3.new(newPos.X - pos.X, 0, newPos.Z - pos.Z)
+				if flatMove.Magnitude > 0.01 then
+					local wall = workspace:Raycast(pos, flatMove.Unit * (flatMove.Magnitude + 1.2), rayCheck)
+					if wall then
+						newPos = Vector3.new(pos.X, newPos.Y, pos.Z)
+						hVel = Vector3.zero
+					end
+				end
+
+				if air and vy <= 0 then
+					local landed = false
+					if towerRootY and newPos.Y <= towerRootY then
+						newPos = Vector3.new(newPos.X, towerRootY, newPos.Z)
+						landed = true
+						virtual = true
+					else
+						local down = workspace:Raycast(pos, Vector3.new(0, newPos.Y - pos.Y - hip - 0.1, 0), rayCheck)
+						if down then
+							newPos = Vector3.new(newPos.X, down.Position.Y + hip, newPos.Z)
+							landed = true
+							virtual = false
+						end
+					end
+					if landed then
+						air = false
+						vy = 0
+						towerRootY = nil
+						if hop then
+							jumpAt = t + hop.hold
+						end
+					end
+				elseif not air and not virtual then
+					local ground = workspace:Raycast(newPos, Vector3.new(0, -(hip + 0.6), 0), rayCheck)
+					if not ground then
+						air = true
+						vy = 0
+					end
+				end
+			end
+
+			pos = newPos
+			path[step + 1] = pos
+		end
+
+		return path
+	end
+
+	local function getPathPosition(path, t)
+		local index = math.max(t, 0) / SIM_STEP
+		local low = math.floor(index) + 1
+		if low >= #path then
+			return path[#path]
+		end
+		local alpha = index - math.floor(index)
+		return path[low]:Lerp(path[low + 1], alpha)
 	end
 
 	local function getBlockedTime(origin, direction, speed, gravity, flightTime)
@@ -5264,89 +5582,87 @@ run(function()
 		return nil
 	end
 
-	local function solveArcs(origin, speed, gravity, targetPos, targetVelocity)
-		local results = {}
-		local disp = targetPos - origin
+	local function solveArcs(origin, speed, gravity, getPos, offset, maxTime)
+		local arcs = {}
+		local previousF
+		local previousT
 
-		if gravity <= 0 then
-			local t = disp.Magnitude / speed
-			for _ = 1, 3 do
-				t = ((targetPos + targetVelocity * t) - origin).Magnitude / speed
-			end
-			if t > 0 then
-				table.insert(results, {time = t, aim = targetPos + targetVelocity * t})
-			end
-			return results
+		local function evaluate(t)
+			local point = getPos(t) + offset
+			local launch = (point - origin + Vector3.new(0, 0.5 * gravity * t * t, 0)) / t
+			return launch.Magnitude - speed, launch
 		end
 
-		local p, q, r = targetVelocity.X, targetVelocity.Y, targetVelocity.Z
-		local h, j, k = disp.X, disp.Y, disp.Z
-		local l = -0.5 * gravity
-		local roots = prediction.solveQuartic(
-			l * l,
-			-2 * q * l,
-			q * q - 2 * j * l - speed * speed + p * p + r * r,
-			2 * j * q + 2 * h * p + 2 * k * r,
-			j * j + h * h + k * k
-		)
-		if not roots then
-			return results
-		end
-
-		for index = 1, 4 do
-			local t = roots[index]
-			if t and t > 0.02 then
-				local offset = Vector3.new((h + p * t) / t, (j + q * t - l * t * t) / t, (k + r * t) / t)
-				table.insert(results, {time = t, aim = origin + offset})
-			end
-		end
-		table.sort(results, function(a, b)
-			return a.time < b.time
-		end)
-		return results
-	end
-
-	local function chooseAim(origin, speed, gravity, lifetime, targetPart, rootPart, velocity, lead, libraryAim, libraryDirection)
-		if libraryAim and libraryDirection then
-			local libraryTime = getFlightTime(origin, libraryAim, libraryDirection, speed)
-			if libraryTime and libraryTime <= lifetime then
-				if not getBlockedTime(origin, libraryDirection, speed, gravity, libraryTime) then
-					return libraryDirection
+		local t = 0.04
+		while t <= maxTime do
+			local f = evaluate(t)
+			if previousF and previousF * f <= 0 then
+				local low, high, lowF = previousT, t, previousF
+				for _ = 1, 8 do
+					local mid = (low + high) / 2
+					local midF = evaluate(mid)
+					if lowF * midF <= 0 then
+						high = mid
+					else
+						low = mid
+						lowF = midF
+					end
+				end
+				local hit = (low + high) / 2
+				local _, launch = evaluate(hit)
+				if launch.Magnitude > 0.01 then
+					table.insert(arcs, {time = hit, direction = launch.Unit})
 				end
 			end
+			previousF = f
+			previousT = t
+			t += 0.02
 		end
+		return arcs
+	end
 
-		local flat = Vector3.new(rootPart.Position.X - origin.X, 0, rootPart.Position.Z - origin.Z)
+	local function chooseAim(origin, speed, gravity, maxTime, getPos, targetPart, rootPart, volatile)
+		local root = rootPart.Position
+		local flat = Vector3.new(root.X - origin.X, 0, root.Z - origin.Z)
 		if flat.Magnitude < 0.01 then
 			flat = Vector3.new(0, 0, 1)
 		end
-		local side = Vector3.new(0, 1, 0):Cross(flat.Unit) * 1
-		local root = rootPart.Position
-		local points = {
-			targetPart.Position,
-			root + Vector3.new(0, 1.5, 0),
-			root + side,
-			root - side,
-			root + Vector3.new(0, -1.6, 0),
-			root + side + Vector3.new(0, 1.2, 0),
-			root - side + Vector3.new(0, 1.2, 0)
+		local side = Vector3.new(0, 1, 0):Cross(flat.Unit)
+
+		local primary = targetPart.Position - root
+		if volatile and primary.Y > 0.5 then
+			primary = Vector3.new(0, 0.3, 0)
+		end
+		local offsets = {
+			primary,
+			Vector3.new(0, 1.5, 0),
+			side,
+			-side,
+			Vector3.new(0, -1.6, 0),
+			side + Vector3.new(0, 1.2, 0),
+			-side + Vector3.new(0, 1.2, 0)
 		}
 
+		local allArcs = {}
+		for index, offset in offsets do
+			allArcs[index] = solveArcs(origin, speed, gravity, getPos, offset, maxTime)
+			if index == 1 and not BlockCheck.Enabled then
+				local arc = allArcs[1][1]
+				return arc and arc.direction or nil
+			end
+		end
+
 		for arcIndex = 1, 2 do
-			for _, point in points do
-				local futurePoint = point + velocity * lead
-				local arcs = solveArcs(origin, speed, gravity, futurePoint, velocity)
-				local arc = arcs[arcIndex]
-				if arc and arc.time <= lifetime then
-					local direction = (arc.aim - origin).Unit
-					if not getBlockedTime(origin, direction, speed, gravity, arc.time) then
-						return direction
-					end
+			for index = 1, #offsets do
+				local arc = allArcs[index][arcIndex]
+				if arc and not getBlockedTime(origin, arc.direction, speed, gravity, arc.time) then
+					return arc.direction
 				end
 			end
 		end
 
-		return nil
+		local fallback = allArcs[1][1]
+		return fallback and fallback.direction or nil
 	end
 
 	ProjectileAimbot = vape.Categories.Blatant:CreateModule({
@@ -5357,6 +5673,40 @@ run(function()
 				ProjectileAimbot:Clean(runService.RenderStepped:Connect(function(dt)
 					frameTime = frameTime + (math.min(dt, 0.25) - frameTime) * 0.1
 				end))
+
+				ProjectileAimbot:Clean(runService.Heartbeat:Connect(function()
+					local now = os.clock()
+					for _, ent in entitylib.List do
+						if ent.Player and ent.Player ~= lplr and ent.RootPart then
+							pcall(trackEntity, ent, now)
+						end
+					end
+				end))
+
+				local launchSuccess, launchEvent = pcall(function()
+					return bedwars.Client:Get('ProjectileLaunchClient').instance.OnClientEvent
+				end)
+				if launchSuccess and launchEvent then
+					ProjectileAimbot:Clean(launchEvent:Connect(function(data)
+						if type(data) ~= 'table' or not data.shooter then
+							return
+						end
+						local shooter = data.shooter
+						local now = os.clock()
+						for _, ent in entitylib.List do
+							if ent.Player and ent.Player ~= lplr then
+								local match = ent.Character == shooter or ent.Player == shooter
+								if not match and typeof(shooter) == 'Instance' and ent.Character then
+									match = shooter:IsDescendantOf(ent.Character)
+								end
+								if match then
+									pcall(registerShot, ent, now)
+									break
+								end
+							end
+						end
+					end))
+				end
 
 				old = bedwars.ProjectileController.calculateImportantLaunchValues
 				bedwars.ProjectileController.calculateImportantLaunchValues = function(...)
@@ -5410,7 +5760,7 @@ run(function()
 							playerGravity = 6
 						end
 
-						if plr.Player:GetAttribute('IsOwlTarget') then
+						if plr.Player and plr.Player:GetAttribute('IsOwlTarget') then
 							for _, owl in collectionService:GetTagged('Owl') do
 								if owl:GetAttribute('Target') == plr.Player.UserId and owl:GetAttribute('Status') == 2 then
 									playerGravity = 0
@@ -5420,19 +5770,49 @@ run(function()
 
 						local isTelepearl = projmeta.projectile == 'telepearl'
 						local velocity = targetPart.AssemblyLinearVelocity or targetPart.Velocity or Vector3.zero
-						velocity *= VelocityPrediction.Value / 100
+						local scale = VelocityPrediction.Value / 100
+						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
 						if isTelepearl then
 							velocity = Vector3.zero
 						end
 
 						refreshRayFilter()
+						local now = os.clock()
 						local lead = isTelepearl and 0 or getLeadTime()
-						local leadPosition = targetPart.Position + velocity * lead
-						local libraryAim = prediction.SolveTrajectory(offsetpos, projSpeed, gravity, leadPosition, velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
-						local direction = libraryAim and (libraryAim - offsetpos).Unit
+						local direction
 
-						if BlockCheck.Enabled and plr.RootPart then
-							direction = chooseAim(offsetpos, projSpeed, gravity, lifetime, targetPart, plr.RootPart, velocity, lead, libraryAim, direction) or direction
+						if plr.RootPart and plr.Player and not isTelepearl then
+							local profile = profiles[plr.Player]
+							local reaction = (profile and LearnMoves.Enabled) and getReactionFactor(profile, now) or 1
+							local cached = simCache[plr]
+							local path
+							if cached and now - cached.t < 0.04 then
+								path = cached.path
+							else
+								local success, result = pcall(simulatePath, plr, profile, velocity, now, playerGravity, reaction)
+								if success then
+									path = result
+									simCache[plr] = {t = now, path = result}
+								end
+							end
+
+							if path then
+								local volatile = profile ~= nil and (profile.air or getHopPattern(profile, now) ~= nil or getStrafePattern(profile, now) ~= nil)
+								local maxTime = math.min(lifetime, (SIM_STEPS * SIM_STEP) - lead)
+								local function getPos(t)
+									return getPathPosition(path, t + lead)
+								end
+								local success, result = pcall(chooseAim, offsetpos, projSpeed, gravity, maxTime, getPos, targetPart, plr.RootPart, volatile)
+								if success then
+									direction = result
+								end
+							end
+						end
+
+						if not direction then
+							local leadPosition = targetPart.Position + velocity * lead
+							local libraryAim = prediction.SolveTrajectory(offsetpos, projSpeed, gravity, leadPosition, velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
+							direction = libraryAim and (libraryAim - offsetpos).Unit
 						end
 
 						if direction then
@@ -5484,6 +5864,11 @@ run(function()
 		Name = 'Block check',
 		Default = true,
 		Tooltip = 'If blocks are in the way, aims at another body spot\nor lobs the shot over or around them.'
+	})
+	LearnMoves = ProjectileAimbot:CreateToggle({
+		Name = 'Learn movement',
+		Default = true,
+		Tooltip = 'Watches every player. Learns jump, tower, strafe\nand what they do after they shoot.'
 	})
 	PingComp = ProjectileAimbot:CreateToggle({
 		Name = 'Ping compensation',
