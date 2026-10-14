@@ -5206,6 +5206,7 @@ run(function()
 	local FPSComp
 	local InterpDelay
 	local LearnMoves
+	local JukeGuard
 	local ProjectileAimbot
 	local old
 	local frameTime = 1 / 60
@@ -5214,6 +5215,7 @@ run(function()
 	local JUMP_VELOCITY = 42.6
 	local SIM_STEP = 1 / 30
 	local SIM_STEPS = 66
+	local RATIO_HORIZONS = {0.3, 0.6, 0.9}
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
 	rayCheck.RespectCanCollide = true
@@ -5270,11 +5272,39 @@ run(function()
 				headingTime = 0,
 				lastShot = 0,
 				pending = nil,
-				reactions = {}
+				reactions = {},
+				ratios = {{}, {}, {}},
+				lastRatioTime = 0
 			}
 			profiles[player] = profile
 		end
 		return profile
+	end
+
+	local function updateRatios(profile, now, pos)
+		if now - profile.lastRatioTime < 0.1 then
+			return
+		end
+		profile.lastRatioTime = now
+		local samples = profile.samples
+		for bucket, horizon in RATIO_HORIZONS do
+			local wanted = now - horizon
+			local found
+			for index = #samples, 1, -1 do
+				if samples[index].t <= wanted then
+					found = samples[index]
+					break
+				end
+			end
+			if found and wanted - found.t < 0.08 then
+				local flatVel = flatten(found.v)
+				local speed = flatVel.Magnitude
+				if speed > 6 then
+					local actual = flatten(pos - found.p):Dot(flatVel.Unit)
+					pushLimited(profile.ratios[bucket], math.clamp(actual / (speed * horizon), -1, 1.4), 20)
+				end
+			end
+		end
 	end
 
 	local function trackEntity(ent, now)
@@ -5313,6 +5343,7 @@ run(function()
 		end
 
 		pushLimited(samples, {t = now, p = pos, v = vel}, 80)
+		updateRatios(profile, now, pos)
 
 		local pending = profile.pending
 		if pending then
@@ -5377,6 +5408,43 @@ run(function()
 		end
 		local count = #profile.reactions
 		return math.clamp((ratioSum / count) * (dotSum / count), -1, 1.3)
+	end
+
+	local function getLearnedRatio(profile, flightTime, speed)
+		local bucket = 1
+		if flightTime > 0.75 then
+			bucket = 3
+		elseif flightTime > 0.45 then
+			bucket = 2
+		end
+		local list = profile.ratios[bucket]
+		if #list < 6 then
+			return 1
+		end
+		local window = math.clamp(1.3 / math.max(speed * flightTime, 1), 0.08, 0.6)
+		local bestRatio = 1
+		local bestCount = -1
+		for _, candidate in list do
+			local count = 0
+			for _, other in list do
+				if math.abs(other - candidate) <= window then
+					count += 1
+				end
+			end
+			if count > bestCount or (count == bestCount and math.abs(candidate - 1) < math.abs(bestRatio - 1)) then
+				bestCount = count
+				bestRatio = candidate
+			end
+		end
+		local sum = 0
+		local members = 0
+		for _, other in list do
+			if math.abs(other - bestRatio) <= window then
+				sum += other
+				members += 1
+			end
+		end
+		return members > 0 and sum / members or 1
 	end
 
 	local function getHopPattern(profile, now)
@@ -5784,12 +5852,18 @@ run(function()
 						if plr.RootPart and plr.Player and not isTelepearl then
 							local profile = profiles[plr.Player]
 							local reaction = (profile and LearnMoves.Enabled) and getReactionFactor(profile, now) or 1
+							local ratio = 1
+							if profile and LearnMoves.Enabled and JukeGuard.Enabled and reaction == 1 and not getStrafePattern(profile, now) then
+								local flightGuess = ((plr.RootPart.Position - offsetpos).Magnitude / projSpeed) + lead
+								ratio = getLearnedRatio(profile, flightGuess, flatten(velocity).Magnitude)
+							end
+							local simVelocity = Vector3.new(velocity.X * ratio, velocity.Y, velocity.Z * ratio)
 							local cached = simCache[plr]
 							local path
 							if cached and now - cached.t < 0.04 then
 								path = cached.path
 							else
-								local success, result = pcall(simulatePath, plr, profile, velocity, now, playerGravity, reaction)
+								local success, result = pcall(simulatePath, plr, profile, simVelocity, now, playerGravity, reaction)
 								if success then
 									path = result
 									simCache[plr] = {t = now, path = result}
@@ -5797,7 +5871,7 @@ run(function()
 							end
 
 							if path then
-								local volatile = profile ~= nil and (profile.air or getHopPattern(profile, now) ~= nil or getStrafePattern(profile, now) ~= nil)
+								local volatile = profile ~= nil and (profile.air or ratio < 0.8 or getHopPattern(profile, now) ~= nil or getStrafePattern(profile, now) ~= nil)
 								local maxTime = math.min(lifetime, (SIM_STEPS * SIM_STEP) - lead)
 								local function getPos(t)
 									return getPathPosition(path, t + lead)
@@ -5869,6 +5943,11 @@ run(function()
 		Name = 'Learn movement',
 		Default = true,
 		Tooltip = 'Watches every player. Learns jump, tower, strafe\nand what they do after they shoot.'
+	})
+	JukeGuard = ProjectileAimbot:CreateToggle({
+		Name = 'Juke guard',
+		Default = true,
+		Tooltip = 'Learns how far each player really moves compared to\nthe straight line guess, and aims where they usually end up.'
 	})
 	PingComp = ProjectileAimbot:CreateToggle({
 		Name = 'Ping compensation',
