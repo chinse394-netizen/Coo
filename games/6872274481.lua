@@ -12772,6 +12772,7 @@ run(function()
 	local originalTerrainDecoration
 	local originalWater, originalSpecular
 	local originalTechnology
+	local originalQualityLevel
 	local measuredFPS, frames, sampleStart = 0, 0, os.clock()
 	local effectClasses = {
 		ParticleEmitter = true,
@@ -12826,6 +12827,10 @@ run(function()
 			originalGlobalShadows = nil
 		end
 		if MeshDetail.Enabled then
+			pcall(function()
+				if originalQualityLevel == nil then originalQualityLevel = settings().Rendering.QualityLevel end
+				settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+			end)
 			if originalTerrainDecoration == nil then originalTerrainDecoration = workspace.Terrain.Decoration end
 			workspace.Terrain.Decoration = false
 			for _, object in workspace:GetDescendants() do
@@ -12835,6 +12840,10 @@ run(function()
 				end
 			end
 		else
+			if originalQualityLevel ~= nil then
+				pcall(function() settings().Rendering.QualityLevel = originalQualityLevel end)
+				originalQualityLevel = nil
+			end
 			if originalTerrainDecoration ~= nil then
 				workspace.Terrain.Decoration = originalTerrainDecoration
 				originalTerrainDecoration = nil
@@ -13053,6 +13062,10 @@ run(function()
 					workspace.Terrain.Decoration = originalTerrainDecoration
 					originalTerrainDecoration = nil
 				end
+				if originalQualityLevel ~= nil then
+					pcall(function() settings().Rendering.QualityLevel = originalQualityLevel end)
+					originalQualityLevel = nil
+				end
 				for object, fidelity in originalMeshFidelity do
 					if object.Parent then pcall(function() object.RenderFidelity = fidelity end) end
 				end
@@ -13125,37 +13138,42 @@ run(function()
 	Particles = FPSBoost:CreateToggle({
 		Name = 'Disable particles and trails',
 		Function = applyRenderOptions,
+		Default = true,
 		Tooltip = 'Disables local particles, trails, beams, fire, smoke, and sparkles.'
 	})
 	PostProcessing = FPSBoost:CreateToggle({
 		Name = 'Disable post-processing',
 		Function = applyRenderOptions,
+		Default = true,
 		Tooltip = 'Disables bloom, depth of field, sun rays, and color effects without changing the sky.'
 	})
 	Shadows = FPSBoost:CreateToggle({
 		Name = 'Reduce shadows',
 		Function = applyRenderOptions,
+		Default = true,
 		Tooltip = 'Turns off local dynamic shadows.'
 	})
 	MeshDetail = FPSBoost:CreateToggle({
 		Name = 'Render quality',
 		Function = applyRenderOptions,
+		Default = true,
 		Tooltip = 'Uses lower-detail local terrain decoration and mesh geometry while preserving colours, avatars, and the sky.'
 	})
 	WorldTextures = FPSBoost:CreateToggle({
 		Name = 'Cosmetics',
 		Function = applyRenderOptions,
+		Default = true,
 		Tooltip = 'Strongest visual option: removes map MeshPart textures and decals locally, but leaves player avatars unchanged.'
 	})
-	Accessories = FPSBoost:CreateToggle({Name = 'Accessories', Function = applyRenderOptions, Tooltip = 'Hides other players\' accessory parts locally.'})
-	FreezeAnimations = FPSBoost:CreateToggle({Name = 'Freeze animations', Function = applyRenderOptions, Tooltip = 'Pauses other players\' currently playing animations locally.'})
-	Clouds = FPSBoost:CreateToggle({Name = 'Clouds', Function = applyRenderOptions, Tooltip = 'Disables local Cloud instances.'})
-	Lights = FPSBoost:CreateToggle({Name = 'Lights', Function = applyRenderOptions, Tooltip = 'Disables local point, spot, and surface lights.'})
-	Water = FPSBoost:CreateToggle({Name = 'Water', Function = applyRenderOptions, Tooltip = 'Removes local water waves and reflections.'})
-	Reflections = FPSBoost:CreateToggle({Name = 'Reflections', Function = applyRenderOptions, Tooltip = 'Disables local environment specular reflections.'})
-	Nametags = FPSBoost:CreateToggle({Name = 'Nametags', Function = applyRenderOptions, Tooltip = 'Hides other players\' BillboardGui nametags locally.'})
-	Explosions = FPSBoost:CreateToggle({Name = 'Explosions', Function = applyRenderOptions, Tooltip = 'Hides local Explosion visuals.'})
-	CompatibilityLighting = FPSBoost:CreateToggle({Name = 'Compatibility lighting', Function = applyRenderOptions, Tooltip = 'Uses Roblox compatibility lighting locally.'})
+	Accessories = FPSBoost:CreateToggle({Name = 'Accessories', Function = applyRenderOptions, Default = true, Tooltip = 'Hides other players\' accessory parts locally.'})
+	FreezeAnimations = FPSBoost:CreateToggle({Name = 'Freeze animations', Function = applyRenderOptions, Default = true, Tooltip = 'Pauses other players\' currently playing animations locally.'})
+	Clouds = FPSBoost:CreateToggle({Name = 'Clouds', Function = applyRenderOptions, Default = true, Tooltip = 'Disables local Cloud instances.'})
+	Lights = FPSBoost:CreateToggle({Name = 'Lights', Function = applyRenderOptions, Default = true, Tooltip = 'Disables local point, spot, and surface lights.'})
+	Water = FPSBoost:CreateToggle({Name = 'Water', Function = applyRenderOptions, Default = true, Tooltip = 'Removes local water waves and reflections.'})
+	Reflections = FPSBoost:CreateToggle({Name = 'Reflections', Function = applyRenderOptions, Default = true, Tooltip = 'Disables local environment specular reflections.'})
+	Nametags = FPSBoost:CreateToggle({Name = 'Nametags', Function = applyRenderOptions, Default = true, Tooltip = 'Hides other players\' BillboardGui nametags locally.'})
+	Explosions = FPSBoost:CreateToggle({Name = 'Explosions', Function = applyRenderOptions, Default = true, Tooltip = 'Hides local Explosion visuals.'})
+	CompatibilityLighting = FPSBoost:CreateToggle({Name = 'Compatibility lighting', Function = applyRenderOptions, Default = true, Tooltip = 'Uses Roblox compatibility lighting locally.'})
 	FPSCap = FPSBoost:CreateToggle({
 		Name = 'Set FPS cap to 300',
 		Function = function(enabled)
