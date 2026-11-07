@@ -4,6 +4,8 @@ local cloneref = cloneref or function(obj) return obj end
 local playersService = cloneref(game:GetService('Players'))
 local replicatedStorage = cloneref(game:GetService('ReplicatedStorage'))
 local inputService = cloneref(game:GetService('UserInputService'))
+local lightingService = cloneref(game:GetService('Lighting'))
+local runService = cloneref(game:GetService('RunService'))
 
 local lplr = playersService.LocalPlayer
 local vape = shared.vape
@@ -84,6 +86,170 @@ run(function()
 			end
 		end,
 		Tooltip = 'Sets your sprinting to true.'
+	})
+end)
+
+-- This only changes the local client's rendering settings.  Nothing here is sent
+-- to the server, and every changed property is restored when the module is off.
+run(function()
+	local FPSBooster
+	local FXCleanup
+	local LightingCleanup
+	local ReducedShadows
+	local UnlockFPSCap
+	local originalEffects = {}
+	local originalLighting = {}
+	local originalGlobalShadows
+	local measuredFPS = 0
+	local frameCount = 0
+	local sampleStarted = os.clock()
+
+	local effectClasses = {
+		ParticleEmitter = true,
+		Trail = true,
+		Beam = true,
+		Fire = true,
+		Smoke = true,
+		Sparkles = true
+	}
+
+	local function rememberEffect(effect)
+		if effectClasses[effect.ClassName] and originalEffects[effect] == nil then
+			originalEffects[effect] = effect.Enabled
+		end
+	end
+
+	local function setEffectsEnabled(enabled)
+		for _, object in workspace:GetDescendants() do
+			if effectClasses[object.ClassName] then
+				rememberEffect(object)
+				object.Enabled = enabled and originalEffects[object] or false
+			end
+		end
+	end
+
+	local function restoreEffects()
+		for effect, enabled in originalEffects do
+			if effect.Parent then
+				effect.Enabled = enabled
+			end
+		end
+		table.clear(originalEffects)
+	end
+
+	local function rememberLighting(object)
+		if originalLighting[object] == nil then
+			originalLighting[object] = object.Enabled
+		end
+	end
+
+	local function setPostProcessingEnabled(enabled)
+		for _, object in lightingService:GetChildren() do
+			if object:IsA('PostEffect') then
+				rememberLighting(object)
+				object.Enabled = enabled and originalLighting[object] or false
+			end
+		end
+	end
+
+	local function restoreLighting()
+		for object, enabled in originalLighting do
+			if object.Parent then
+				object.Enabled = enabled
+			end
+		end
+		table.clear(originalLighting)
+	end
+
+	local function applyOptions()
+		if not FPSBooster.Enabled then return end
+		if FXCleanup.Enabled then setEffectsEnabled(false) else restoreEffects() end
+		if LightingCleanup.Enabled then setPostProcessingEnabled(false) else restoreLighting() end
+		if ReducedShadows.Enabled then
+			if originalGlobalShadows == nil then
+				originalGlobalShadows = lightingService.GlobalShadows
+			end
+			lightingService.GlobalShadows = false
+		elseif originalGlobalShadows ~= nil then
+			lightingService.GlobalShadows = originalGlobalShadows
+			originalGlobalShadows = nil
+		end
+	end
+
+	FPSBooster = vape.Categories.Utility:CreateModule({
+		Name = 'FPS Booster',
+		Function = function(enabled)
+			if enabled then
+				local effects, postEffects = 0, 0
+				for _, object in workspace:GetDescendants() do
+					if effectClasses[object.ClassName] then effects += 1 end
+				end
+				for _, object in lightingService:GetChildren() do
+					if object:IsA('PostEffect') then postEffects += 1 end
+				end
+				notif('FPS Booster', ('Scene scan: %d visual effects, %d post-processing effects. Use the options below to disable only what you want.'):format(effects, postEffects), 6)
+				FPSBooster:Clean(runService.RenderStepped:Connect(function()
+					frameCount += 1
+					local elapsed = os.clock() - sampleStarted
+					if elapsed >= 1 then
+						measuredFPS = math.floor(frameCount / elapsed)
+						frameCount = 0
+						sampleStarted = os.clock()
+					end
+				end))
+				FPSBooster:Clean(workspace.DescendantAdded:Connect(function(object)
+					if FXCleanup.Enabled and effectClasses[object.ClassName] then
+						rememberEffect(object)
+						object.Enabled = false
+					end
+				end))
+				FPSBooster:Clean(lightingService.ChildAdded:Connect(function(object)
+					if LightingCleanup.Enabled and object:IsA('PostEffect') then
+						rememberLighting(object)
+						object.Enabled = false
+					end
+				end))
+				applyOptions()
+			else
+				restoreEffects()
+				restoreLighting()
+				if originalGlobalShadows ~= nil then
+					lightingService.GlobalShadows = originalGlobalShadows
+					originalGlobalShadows = nil
+				end
+			end
+		end,
+		ExtraText = function()
+			return measuredFPS > 0 and (measuredFPS .. ' FPS') or 'scanning'
+		end,
+		Tooltip = 'Local, reversible render optimizations. This cannot create FPS beyond what your device and the game can render.'
+	})
+
+	FXCleanup = FPSBooster:CreateToggle({
+		Name = 'Disable particles and trails',
+		Function = applyOptions,
+		Tooltip = 'Disables local particle, trail, beam, fire, smoke, and sparkle effects.'
+	})
+	LightingCleanup = FPSBooster:CreateToggle({
+		Name = 'Disable post-processing',
+		Function = applyOptions,
+		Tooltip = 'Disables bloom, depth of field, sun rays, and color effects without changing the sky.'
+	})
+	ReducedShadows = FPSBooster:CreateToggle({
+		Name = 'Reduce shadows',
+		Function = applyOptions,
+		Tooltip = 'Turns off dynamic shadows locally. This is usually less noticeable than texture or sky changes.'
+	})
+	UnlockFPSCap = FPSBooster:CreateToggle({
+		Name = 'Set FPS cap to 300',
+		Function = function(enabled)
+			if enabled and setfpscap then
+				setfpscap(300)
+			elseif enabled then
+				notif('FPS Booster', 'Your executor does not provide setfpscap.', 5)
+			end
+		end,
+		Tooltip = 'Raises a supported executor FPS cap to 300; it does not guarantee that frame rate.'
 	})
 end)
 	run(function()
