@@ -12751,13 +12751,27 @@ run(function()
 	local Shadows
 	local MeshDetail
 	local WorldTextures
+	local Accessories
+	local FreezeAnimations
+	local Clouds
+	local Lights
+	local Water
+	local Reflections
+	local Nametags
+	local Explosions
+	local CompatibilityLighting
 	local FPSCap
 	local effects, util = {}, {}
 	local disabledEffects, disabledPostEffects = {}, {}
 	local originalMeshFidelity = {}
 	local originalTextures = {}
+	local originalAccessories, originalLights, originalNametags = {}, {}, {}
+	local originalClouds = {}
+	local originalAnimationSpeeds, originalExplosions = {}, {}
 	local originalGlobalShadows
 	local originalTerrainDecoration
+	local originalWater, originalSpecular
+	local originalTechnology
 	local measuredFPS, frames, sampleStart = 0, 0, os.clock()
 	local effectClasses = {
 		ParticleEmitter = true,
@@ -12861,10 +12875,90 @@ run(function()
 			end
 			table.clear(originalTextures)
 		end
+		for _, object in workspace:GetDescendants() do
+			local isLocalCharacter = lplr.Character and object:IsDescendantOf(lplr.Character)
+			if Accessories.Enabled and not isLocalCharacter and object:IsA('BasePart') and object:FindFirstAncestorWhichIsA('Accessory') then
+				if originalAccessories[object] == nil then originalAccessories[object] = object.LocalTransparencyModifier end
+				object.LocalTransparencyModifier = 1
+			elseif Nametags.Enabled and not isLocalCharacter and object:IsA('BillboardGui') then
+				if originalNametags[object] == nil then originalNametags[object] = object.Enabled end
+				object.Enabled = false
+			elseif Lights.Enabled and object:IsA('Light') then
+				if originalLights[object] == nil then originalLights[object] = object.Enabled end
+				object.Enabled = false
+			elseif Clouds.Enabled and object:IsA('Clouds') then
+				if originalClouds[object] == nil then originalClouds[object] = object.Enabled end
+				object.Enabled = false
+			end
+		end
+		if not Accessories.Enabled then
+			for object, value in originalAccessories do if object.Parent then object.LocalTransparencyModifier = value end end
+			table.clear(originalAccessories)
+		end
+		if not Nametags.Enabled then
+			for object, value in originalNametags do if object.Parent then object.Enabled = value end end
+			table.clear(originalNametags)
+		end
+		if not Lights.Enabled then
+			for object, value in originalLights do if object.Parent then object.Enabled = value end end
+			table.clear(originalLights)
+		end
+		if not Clouds.Enabled then
+			for object, value in originalClouds do if object.Parent then object.Enabled = value end end
+			table.clear(originalClouds)
+		end
+		if Water.Enabled then
+			if not originalWater then
+				originalWater = {workspace.Terrain.WaterWaveSize, workspace.Terrain.WaterWaveSpeed, workspace.Terrain.WaterReflectance}
+			end
+			workspace.Terrain.WaterWaveSize, workspace.Terrain.WaterWaveSpeed, workspace.Terrain.WaterReflectance = 0, 0, 0
+		elseif originalWater then
+			workspace.Terrain.WaterWaveSize, workspace.Terrain.WaterWaveSpeed, workspace.Terrain.WaterReflectance = unpack(originalWater)
+			originalWater = nil
+		end
+		if Reflections.Enabled then
+			if originalSpecular == nil then originalSpecular = lightingService.EnvironmentSpecularScale end
+			lightingService.EnvironmentSpecularScale = 0
+		elseif originalSpecular ~= nil then
+			lightingService.EnvironmentSpecularScale = originalSpecular
+			originalSpecular = nil
+		end
+		if CompatibilityLighting.Enabled then
+			if originalTechnology == nil then originalTechnology = lightingService.Technology end
+			pcall(function() lightingService.Technology = Enum.Technology.Compatibility end)
+		elseif originalTechnology ~= nil then
+			pcall(function() lightingService.Technology = originalTechnology end)
+			originalTechnology = nil
+		end
+		for _, object in workspace:GetDescendants() do
+			if Explosions.Enabled and object:IsA('Explosion') then
+				if originalExplosions[object] == nil then originalExplosions[object] = object.Visible end
+				object.Visible = false
+			elseif FreezeAnimations.Enabled and object:IsA('Humanoid') and object.Parent ~= lplr.Character then
+				local animator = object:FindFirstChildOfClass('Animator')
+				if animator then
+					for _, track in animator:GetPlayingAnimationTracks() do
+						if originalAnimationSpeeds[track] == nil then
+							local ok, speed = pcall(function() return track.Speed end)
+							if ok then originalAnimationSpeeds[track] = speed end
+						end
+						pcall(function() track:AdjustSpeed(0) end)
+					end
+				end
+			end
+		end
+		if not Explosions.Enabled then
+			for object, visible in originalExplosions do if object.Parent then object.Visible = visible end end
+			table.clear(originalExplosions)
+		end
+		if not FreezeAnimations.Enabled then
+			for track, speed in originalAnimationSpeeds do pcall(function() track:AdjustSpeed(speed) end) end
+			table.clear(originalAnimationSpeeds)
+		end
 	end
 	
 	FPSBoost = vape.Categories.Utility:CreateModule({
-		Name = 'FPS Booster',
+		Name = 'FPSBooster',
 		Function = function(callback)
 			if callback then
 				local effectCount, postEffectCount = 0, 0
@@ -12969,6 +13063,30 @@ run(function()
 					end
 				end
 				table.clear(originalTextures)
+				for object, value in originalAccessories do if object.Parent then object.LocalTransparencyModifier = value end end
+				for object, value in originalNametags do if object.Parent then object.Enabled = value end end
+				for object, value in originalLights do if object.Parent then object.Enabled = value end end
+				for object, value in originalClouds do if object.Parent then object.Enabled = value end end
+				table.clear(originalAccessories)
+				table.clear(originalNametags)
+				table.clear(originalLights)
+				table.clear(originalClouds)
+				if originalWater then
+					workspace.Terrain.WaterWaveSize, workspace.Terrain.WaterWaveSpeed, workspace.Terrain.WaterReflectance = unpack(originalWater)
+					originalWater = nil
+				end
+				if originalSpecular ~= nil then
+					lightingService.EnvironmentSpecularScale = originalSpecular
+					originalSpecular = nil
+				end
+				if originalTechnology ~= nil then
+					pcall(function() lightingService.Technology = originalTechnology end)
+					originalTechnology = nil
+				end
+				for object, visible in originalExplosions do if object.Parent then object.Visible = visible end end
+				for track, speed in originalAnimationSpeeds do pcall(function() track:AdjustSpeed(speed) end) end
+				table.clear(originalExplosions)
+				table.clear(originalAnimationSpeeds)
 				for i, v in effects do 
 					bedwars.KillEffectController.killEffects[i] = v 
 				end
@@ -13020,15 +13138,24 @@ run(function()
 		Tooltip = 'Turns off local dynamic shadows.'
 	})
 	MeshDetail = FPSBoost:CreateToggle({
-		Name = 'Reduce terrain and mesh detail',
+		Name = 'Render quality',
 		Function = applyRenderOptions,
 		Tooltip = 'Uses lower-detail local terrain decoration and mesh geometry while preserving colours, avatars, and the sky.'
 	})
 	WorldTextures = FPSBoost:CreateToggle({
-		Name = 'Disable world textures',
+		Name = 'Cosmetics',
 		Function = applyRenderOptions,
 		Tooltip = 'Strongest visual option: removes map MeshPart textures and decals locally, but leaves player avatars unchanged.'
 	})
+	Accessories = FPSBoost:CreateToggle({Name = 'Accessories', Function = applyRenderOptions, Tooltip = 'Hides other players\' accessory parts locally.'})
+	FreezeAnimations = FPSBoost:CreateToggle({Name = 'Freeze animations', Function = applyRenderOptions, Tooltip = 'Pauses other players\' currently playing animations locally.'})
+	Clouds = FPSBoost:CreateToggle({Name = 'Clouds', Function = applyRenderOptions, Tooltip = 'Disables local Cloud instances.'})
+	Lights = FPSBoost:CreateToggle({Name = 'Lights', Function = applyRenderOptions, Tooltip = 'Disables local point, spot, and surface lights.'})
+	Water = FPSBoost:CreateToggle({Name = 'Water', Function = applyRenderOptions, Tooltip = 'Removes local water waves and reflections.'})
+	Reflections = FPSBoost:CreateToggle({Name = 'Reflections', Function = applyRenderOptions, Tooltip = 'Disables local environment specular reflections.'})
+	Nametags = FPSBoost:CreateToggle({Name = 'Nametags', Function = applyRenderOptions, Tooltip = 'Hides other players\' BillboardGui nametags locally.'})
+	Explosions = FPSBoost:CreateToggle({Name = 'Explosions', Function = applyRenderOptions, Tooltip = 'Hides local Explosion visuals.'})
+	CompatibilityLighting = FPSBoost:CreateToggle({Name = 'Compatibility lighting', Function = applyRenderOptions, Tooltip = 'Uses Roblox compatibility lighting locally.'})
 	FPSCap = FPSBoost:CreateToggle({
 		Name = 'Set FPS cap to 300',
 		Function = function(enabled)
