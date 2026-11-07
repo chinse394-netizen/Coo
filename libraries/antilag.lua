@@ -20,7 +20,6 @@ local CONFIG = {
 	MEMORY_CHECK_INTERVAL = 15, -- seconds
 	MAX_PENDING_REQUESTS = 2, -- REDUCED from 3 to 2
 	RENDER_THROTTLE = 0.016, -- throttle excessive renders
-	MAX_FRAME_TIME = 0.05, -- cap frame time at 50ms
 	GC_COLLECTION_INTERVAL = 180, -- INCREASED from 120 to 180 seconds
 	INCREMENTAL_GC = true, -- use incremental garbage collection
 }
@@ -29,9 +28,9 @@ local CONFIG = {
 local state = shared.R12SAStandaloneAntilagState or {
 	pendingHttpRequests = 0,
 	deltaTime = 0,
-	lastFrameTime = tick(),
 	gcCollectInterval = 0,
 	renderFrameCount = 0,
+	renderConnection = nil,
 	running = false,
 	maintenanceRunning = false
 }
@@ -66,17 +65,14 @@ function antilag.GetFPS()
 	return 1 / math.max(state.deltaTime, 0.001)
 end
 
--- Monitor frame times to detect lag - IMPROVED version
+-- RenderStepped supplies the real frame duration.  The old polling loop capped
+-- long frames at 50 ms, which made severe drops look like 20 FPS and gave the
+-- throttler misleading data.
 if not state.running then
 	state.running = true
-	task.spawn(function()
-		while state.running do
-			local currentTime = tick()
-			state.deltaTime = math.min(currentTime - state.lastFrameTime, CONFIG.MAX_FRAME_TIME)
-			state.lastFrameTime = currentTime
-			RunService.RenderStepped:Wait()
-			state.renderFrameCount = state.renderFrameCount + 1
-		end
+	state.renderConnection = RunService.RenderStepped:Connect(function(deltaTime)
+		state.deltaTime = deltaTime
+		state.renderFrameCount = state.renderFrameCount + 1
 	end)
 end
 
@@ -290,6 +286,10 @@ function antilag.Cleanup()
 	state.renderFrameCount = 0
 	state.running = false
 	state.maintenanceRunning = false
+	if state.renderConnection then
+		state.renderConnection:Disconnect()
+		state.renderConnection = nil
+	end
 end
 
 return antilag
