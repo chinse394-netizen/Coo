@@ -13175,15 +13175,16 @@ run(function()
 	Explosions = FPSBoost:CreateToggle({Name = 'Explosions', Function = applyRenderOptions, Default = true, Tooltip = 'Hides local Explosion visuals.'})
 	CompatibilityLighting = FPSBoost:CreateToggle({Name = 'Compatibility lighting', Function = applyRenderOptions, Default = true, Tooltip = 'Uses Roblox compatibility lighting locally.'})
 	FPSCap = FPSBoost:CreateToggle({
-		Name = 'Set FPS cap to 300',
+		Name = 'Frame pace at 160 FPS',
 		Function = function(enabled)
 			if enabled and setfpscap then
-				setfpscap(300)
+				setfpscap(160)
 			elseif enabled then
 				vape:CreateNotification('FPS Booster', 'Your executor does not provide setfpscap.', 5)
 			end
 		end,
-		Tooltip = 'Requests a 300 FPS cap where your executor supports it; it cannot guarantee that FPS.'
+		Default = true,
+		Tooltip = 'Caps the client at 160 to improve frame pacing. It cannot raise FPS above what the current scene can render.'
 	})
 end)
 	
