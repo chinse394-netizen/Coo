@@ -12746,12 +12746,101 @@ run(function()
 	local FPSBoost
 	local Kill
 	local Visualizer
+	local Particles
+	local PostProcessing
+	local Shadows
+	local FPSCap
 	local effects, util = {}, {}
+	local disabledEffects, disabledPostEffects = {}, {}
+	local originalGlobalShadows
+	local measuredFPS, frames, sampleStart = 0, 0, os.clock()
+	local effectClasses = {
+		ParticleEmitter = true,
+		Trail = true,
+		Beam = true,
+		Fire = true,
+		Smoke = true,
+		Sparkles = true
+	}
+
+	local function setParticles(disabled)
+		if disabled then
+			for _, object in workspace:GetDescendants() do
+				if effectClasses[object.ClassName] then
+					if disabledEffects[object] == nil then disabledEffects[object] = object.Enabled end
+					object.Enabled = false
+				end
+			end
+		else
+			for object, enabled in disabledEffects do
+				if object.Parent then object.Enabled = enabled end
+			end
+			table.clear(disabledEffects)
+		end
+	end
+
+	local function setPostProcessing(disabled)
+		if disabled then
+			for _, object in lightingService:GetChildren() do
+				if object:IsA('PostEffect') then
+					if disabledPostEffects[object] == nil then disabledPostEffects[object] = object.Enabled end
+					object.Enabled = false
+				end
+			end
+		else
+			for object, enabled in disabledPostEffects do
+				if object.Parent then object.Enabled = enabled end
+			end
+			table.clear(disabledPostEffects)
+		end
+	end
+
+	local function applyRenderOptions()
+		if not FPSBoost.Enabled then return end
+		setParticles(Particles.Enabled)
+		setPostProcessing(PostProcessing.Enabled)
+		if Shadows.Enabled then
+			if originalGlobalShadows == nil then originalGlobalShadows = lightingService.GlobalShadows end
+			lightingService.GlobalShadows = false
+		elseif originalGlobalShadows ~= nil then
+			lightingService.GlobalShadows = originalGlobalShadows
+			originalGlobalShadows = nil
+		end
+	end
 	
-	FPSBoost = vape.Legit:CreateModule({
-		Name = 'FPS Boost',
+	FPSBoost = vape.Categories.Utility:CreateModule({
+		Name = 'FPS Booster',
 		Function = function(callback)
 			if callback then
+				local effectCount, postEffectCount = 0, 0
+				for _, object in workspace:GetDescendants() do
+					if effectClasses[object.ClassName] then effectCount += 1 end
+				end
+				for _, object in lightingService:GetChildren() do
+					if object:IsA('PostEffect') then postEffectCount += 1 end
+				end
+				vape:CreateNotification('FPS Booster', ('Scene scan: %d visual effects and %d post-processing effects found.'):format(effectCount, postEffectCount), 5)
+				FPSBoost:Clean(runService.RenderStepped:Connect(function()
+					frames += 1
+					local elapsed = os.clock() - sampleStart
+					if elapsed >= 1 then
+						measuredFPS = math.floor(frames / elapsed)
+						frames, sampleStart = 0, os.clock()
+					end
+				end))
+				FPSBoost:Clean(workspace.DescendantAdded:Connect(function(object)
+					if Particles.Enabled and effectClasses[object.ClassName] then
+						if disabledEffects[object] == nil then disabledEffects[object] = object.Enabled end
+						object.Enabled = false
+					end
+				end))
+				FPSBoost:Clean(lightingService.ChildAdded:Connect(function(object)
+					if PostProcessing.Enabled and object:IsA('PostEffect') then
+						if disabledPostEffects[object] == nil then disabledPostEffects[object] = object.Enabled end
+						object.Enabled = false
+					end
+				end))
+				applyRenderOptions()
 				if Kill.Enabled then
 					for i, v in bedwars.KillEffectController.killEffects do
 						if not i:find('Custom') then
@@ -12786,6 +12875,12 @@ run(function()
 					end
 				end
 			else
+				setParticles(false)
+				setPostProcessing(false)
+				if originalGlobalShadows ~= nil then
+					lightingService.GlobalShadows = originalGlobalShadows
+					originalGlobalShadows = nil
+				end
 				for i, v in effects do 
 					bedwars.KillEffectController.killEffects[i] = v 
 				end
@@ -12796,7 +12891,10 @@ run(function()
 				table.clear(util)
 			end
 		end,
-		Tooltip = 'Improves the framerate by turning off certain effects'
+		ExtraText = function()
+			return measuredFPS > 0 and (measuredFPS .. ' FPS') or 'scanning'
+		end,
+		Tooltip = 'Local, reversible rendering options. Your hardware and the game determine the actual FPS.'
 	})
 	Kill = FPSBoost:CreateToggle({
 		Name = 'Kill Effects',
@@ -12817,6 +12915,32 @@ run(function()
 			end
 		end,
 		Default = true
+	})
+	Particles = FPSBoost:CreateToggle({
+		Name = 'Disable particles and trails',
+		Function = applyRenderOptions,
+		Tooltip = 'Disables local particles, trails, beams, fire, smoke, and sparkles.'
+	})
+	PostProcessing = FPSBoost:CreateToggle({
+		Name = 'Disable post-processing',
+		Function = applyRenderOptions,
+		Tooltip = 'Disables bloom, depth of field, sun rays, and color effects without changing the sky.'
+	})
+	Shadows = FPSBoost:CreateToggle({
+		Name = 'Reduce shadows',
+		Function = applyRenderOptions,
+		Tooltip = 'Turns off local dynamic shadows.'
+	})
+	FPSCap = FPSBoost:CreateToggle({
+		Name = 'Set FPS cap to 300',
+		Function = function(enabled)
+			if enabled and setfpscap then
+				setfpscap(300)
+			elseif enabled then
+				vape:CreateNotification('FPS Booster', 'Your executor does not provide setfpscap.', 5)
+			end
+		end,
+		Tooltip = 'Requests a 300 FPS cap where your executor supports it; it cannot guarantee that FPS.'
 	})
 end)
 	
