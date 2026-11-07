@@ -12749,10 +12749,13 @@ run(function()
 	local Particles
 	local PostProcessing
 	local Shadows
+	local MeshDetail
 	local FPSCap
 	local effects, util = {}, {}
 	local disabledEffects, disabledPostEffects = {}, {}
+	local originalMeshFidelity = {}
 	local originalGlobalShadows
+	local originalTerrainDecoration
 	local measuredFPS, frames, sampleStart = 0, 0, os.clock()
 	local effectClasses = {
 		ParticleEmitter = true,
@@ -12806,6 +12809,25 @@ run(function()
 			lightingService.GlobalShadows = originalGlobalShadows
 			originalGlobalShadows = nil
 		end
+		if MeshDetail.Enabled then
+			if originalTerrainDecoration == nil then originalTerrainDecoration = workspace.Terrain.Decoration end
+			workspace.Terrain.Decoration = false
+			for _, object in workspace:GetDescendants() do
+				if object:IsA('MeshPart') then
+					if originalMeshFidelity[object] == nil then originalMeshFidelity[object] = object.RenderFidelity end
+					pcall(function() object.RenderFidelity = Enum.RenderFidelity.Performance end)
+				end
+			end
+		else
+			if originalTerrainDecoration ~= nil then
+				workspace.Terrain.Decoration = originalTerrainDecoration
+				originalTerrainDecoration = nil
+			end
+			for object, fidelity in originalMeshFidelity do
+				if object.Parent then pcall(function() object.RenderFidelity = fidelity end) end
+			end
+			table.clear(originalMeshFidelity)
+		end
 	end
 	
 	FPSBoost = vape.Categories.Utility:CreateModule({
@@ -12838,6 +12860,12 @@ run(function()
 					if PostProcessing.Enabled and object:IsA('PostEffect') then
 						if disabledPostEffects[object] == nil then disabledPostEffects[object] = object.Enabled end
 						object.Enabled = false
+					end
+				end))
+				FPSBoost:Clean(workspace.DescendantAdded:Connect(function(object)
+					if MeshDetail.Enabled and object:IsA('MeshPart') then
+						if originalMeshFidelity[object] == nil then originalMeshFidelity[object] = object.RenderFidelity end
+						pcall(function() object.RenderFidelity = Enum.RenderFidelity.Performance end)
 					end
 				end))
 				applyRenderOptions()
@@ -12881,6 +12909,14 @@ run(function()
 					lightingService.GlobalShadows = originalGlobalShadows
 					originalGlobalShadows = nil
 				end
+				if originalTerrainDecoration ~= nil then
+					workspace.Terrain.Decoration = originalTerrainDecoration
+					originalTerrainDecoration = nil
+				end
+				for object, fidelity in originalMeshFidelity do
+					if object.Parent then pcall(function() object.RenderFidelity = fidelity end) end
+				end
+				table.clear(originalMeshFidelity)
 				for i, v in effects do 
 					bedwars.KillEffectController.killEffects[i] = v 
 				end
@@ -12930,6 +12966,11 @@ run(function()
 		Name = 'Reduce shadows',
 		Function = applyRenderOptions,
 		Tooltip = 'Turns off local dynamic shadows.'
+	})
+	MeshDetail = FPSBoost:CreateToggle({
+		Name = 'Reduce terrain and mesh detail',
+		Function = applyRenderOptions,
+		Tooltip = 'Uses lower-detail local terrain decoration and mesh geometry while preserving colours, avatars, and the sky.'
 	})
 	FPSCap = FPSBoost:CreateToggle({
 		Name = 'Set FPS cap to 300',
