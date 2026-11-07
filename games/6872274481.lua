@@ -12750,10 +12750,12 @@ run(function()
 	local PostProcessing
 	local Shadows
 	local MeshDetail
+	local WorldTextures
 	local FPSCap
 	local effects, util = {}, {}
 	local disabledEffects, disabledPostEffects = {}, {}
 	local originalMeshFidelity = {}
+	local originalTextures = {}
 	local originalGlobalShadows
 	local originalTerrainDecoration
 	local measuredFPS, frames, sampleStart = 0, 0, os.clock()
@@ -12828,6 +12830,37 @@ run(function()
 			end
 			table.clear(originalMeshFidelity)
 		end
+		if WorldTextures.Enabled then
+			for _, object in workspace:GetDescendants() do
+				local isPlayerCharacter = false
+				for _, player in playersService:GetPlayers() do
+					if player.Character and object:IsDescendantOf(player.Character) then
+						isPlayerCharacter = true
+						break
+					end
+				end
+				if not isPlayerCharacter then
+					if object:IsA('MeshPart') and originalTextures[object] == nil then
+						originalTextures[object] = {kind = 'MeshPart', textureId = object.TextureID}
+						pcall(function() object.TextureID = '' end)
+					elseif (object:IsA('Decal') or object:IsA('Texture')) and originalTextures[object] == nil then
+						originalTextures[object] = {kind = 'Overlay', transparency = object.Transparency}
+						object.Transparency = 1
+					end
+				end
+			end
+		else
+			for object, state in originalTextures do
+				if object.Parent then
+					if state.kind == 'MeshPart' then
+						pcall(function() object.TextureID = state.textureId end)
+					else
+						object.Transparency = state.transparency
+					end
+				end
+			end
+			table.clear(originalTextures)
+		end
 	end
 	
 	FPSBoost = vape.Categories.Utility:CreateModule({
@@ -12854,6 +12887,19 @@ run(function()
 					if Particles.Enabled and effectClasses[object.ClassName] then
 						if disabledEffects[object] == nil then disabledEffects[object] = object.Enabled end
 						object.Enabled = false
+					end
+				end))
+				FPSBoost:Clean(workspace.DescendantAdded:Connect(function(object)
+					if not WorldTextures.Enabled then return end
+					for _, player in playersService:GetPlayers() do
+						if player.Character and object:IsDescendantOf(player.Character) then return end
+					end
+					if object:IsA('MeshPart') and originalTextures[object] == nil then
+						originalTextures[object] = {kind = 'MeshPart', textureId = object.TextureID}
+						pcall(function() object.TextureID = '' end)
+					elseif (object:IsA('Decal') or object:IsA('Texture')) and originalTextures[object] == nil then
+						originalTextures[object] = {kind = 'Overlay', transparency = object.Transparency}
+						object.Transparency = 1
 					end
 				end))
 				FPSBoost:Clean(lightingService.ChildAdded:Connect(function(object)
@@ -12917,6 +12963,12 @@ run(function()
 					if object.Parent then pcall(function() object.RenderFidelity = fidelity end) end
 				end
 				table.clear(originalMeshFidelity)
+				for object, state in originalTextures do
+					if object.Parent then
+						if state.kind == 'MeshPart' then pcall(function() object.TextureID = state.textureId end) else object.Transparency = state.transparency end
+					end
+				end
+				table.clear(originalTextures)
 				for i, v in effects do 
 					bedwars.KillEffectController.killEffects[i] = v 
 				end
@@ -12971,6 +13023,11 @@ run(function()
 		Name = 'Reduce terrain and mesh detail',
 		Function = applyRenderOptions,
 		Tooltip = 'Uses lower-detail local terrain decoration and mesh geometry while preserving colours, avatars, and the sky.'
+	})
+	WorldTextures = FPSBoost:CreateToggle({
+		Name = 'Disable world textures',
+		Function = applyRenderOptions,
+		Tooltip = 'Strongest visual option: removes map MeshPart textures and decals locally, but leaves player avatars unchanged.'
 	})
 	FPSCap = FPSBoost:CreateToggle({
 		Name = 'Set FPS cap to 300',
