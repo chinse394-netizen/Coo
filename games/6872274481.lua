@@ -24330,11 +24330,17 @@ run(function()
 			)
 		end)
 		local accepted = false
-		local fired = pcall(function()
-			local projectileFire = replicatedStorage.rbxts_include.node_modules['@rbxts'].net.out._NetManaged.ProjectileFire
-			local result = projectileFire:InvokeServer(projectileTool, 'arrow', 'crossbow_arrow', origin, targetPosition, velocity, projectileId, shotMeta, workspace:GetServerTimeNow() - 0.045)
-			accepted = result ~= nil and (typeof(result) == 'Instance' or (type(result) == 'table' and result.accepted ~= false))
-		end)
+		local fired = false
+		for attempt = 1, 2 do
+			local ok = pcall(function()
+				local projectileFire = replicatedStorage.rbxts_include.node_modules['@rbxts'].net.out._NetManaged.ProjectileFire
+				local result = projectileFire:InvokeServer(projectileTool, 'arrow', 'crossbow_arrow', origin, targetPosition, velocity, projectileId, shotMeta, workspace:GetServerTimeNow() - 0.045)
+				accepted = result ~= nil and (typeof(result) == 'Instance' or (type(result) == 'table' and result.accepted ~= false))
+			end)
+			fired = fired or ok
+			if accepted then break end
+			task.wait(0.06)
+		end
 		task.wait(0.12)
 		bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = originalSlot})
 		local restoreDeadline = tick() + 0.3
