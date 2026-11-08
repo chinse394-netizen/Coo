@@ -24284,40 +24284,29 @@ run(function()
 
 	local function fireCrossbow(crossbow, slot, target)
 		if not crossbow or slot == nil or not target or not target.RootPart then return false end
-		local source = bedwars.ItemMeta[crossbow.itemType] and bedwars.ItemMeta[crossbow.itemType].projectileSource
-		local projectile = 'arrow'
-		if source then
-			if type(source.projectileType) == 'function' then
-				projectile = source.projectileType('arrow')
-			else
-				projectile = source.projectileType or source.projectile or 'arrow'
+		local arrows = getItem('arrow')
+		if not arrows or (arrows.amount or 0) < 1 then return false end
+		local originalSlot = store.inventory.hotbarSlot
+		bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = slot})
+		local equipDeadline = tick() + 0.3
+		repeat task.wait() until store.inventory.hotbarSlot == slot or tick() >= equipDeadline
+		if store.inventory.hotbarSlot ~= slot then return false end
+		task.wait(0.08)
+		local clicked = false
+		if type(mouse1click) == 'function' then
+			clicked = pcall(mouse1click)
+		elseif type(mouse1press) == 'function' and type(mouse1release) == 'function' then
+			clicked = pcall(mouse1press)
+			if clicked then
+				task.wait()
+				pcall(mouse1release)
 			end
 		end
-		local meta = bedwars.ProjectileMeta[projectile]
-		local root = entitylib.character and entitylib.character.RootPart
-		if not meta or not root then return false end
-		local origin, speed = root.Position, meta.launchVelocity or 100
-		local aim = prediction.SolveTrajectory(origin, speed, meta.gravitationalAcceleration or workspace.Gravity, target.RootPart.Position, target.RootPart.Velocity or Vector3.zero, workspace.Gravity, target.HipHeight, target.Jumping and 42.6 or nil)
-		if not aim then return false end
-		local previous = store.hand and store.hand.tool
-		bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = slot})
-		local equipDeadline = tick() + 0.25
-		repeat task.wait() until tick() >= equipDeadline or (store.hand and store.hand.itemType == crossbow.itemType)
-		local crossbowTool = store.hand and store.hand.tool
-		if not crossbowTool then return false end
-		local fired = pcall(function()
-			local velocity = (aim - origin).Unit * speed
-			bedwars.ProjectileController:createLocalProjectile(meta, projectile, projectile, origin, '', velocity, {drawDurationSeconds = 1})
-			local args = {crossbowTool, projectile, projectile, origin, aim, velocity, httpService:GenerateGUID(true), {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045}
-			if type(bedwars.FireProjectile) == 'function' then
-				bedwars.FireProjectile(bedwars.ProjectileController, unpack(args))
-			else
-				bedwars.Client:Get(remotes.FireProjectile).instance:InvokeServer(unpack(args))
-			end
-		end)
 		task.wait(0.12)
-		if previous then switchItem(previous, 0.08) end
-		return fired
+		bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = originalSlot})
+		local restoreDeadline = tick() + 0.3
+		repeat task.wait() until store.inventory.hotbarSlot == originalSlot or tick() >= restoreDeadline
+		return clicked
 	end
 
 	Killaura = vape.Categories.Blatant:CreateModule({
