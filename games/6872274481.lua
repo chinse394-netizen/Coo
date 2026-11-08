@@ -24294,11 +24294,18 @@ run(function()
 		local originalTool = store.hand and store.hand.tool
 		local handValue = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
 		if not handValue then return false end
-		local equipped = pcall(function()
-			bedwars.Client:Get(remotes.EquipItem):CallServerAsync({hand = projectileTool}):timeout(0.35):await()
-		end)
-		if not equipped then return false end
 		handValue.Value = projectileTool
+		local equipRemote = bedwars.Client:Get(remotes.EquipItem)
+		local equipInstance = equipRemote and equipRemote.instance
+		task.spawn(function()
+			pcall(function()
+				if equipInstance then
+					equipInstance:InvokeServer({hand = projectileTool})
+				else
+					equipRemote:CallServerAsync({hand = projectileTool})
+				end
+			end)
+		end)
 		task.wait(0.0475)
 		local root = entitylib.character and entitylib.character.RootPart
 		local origin = root and root.Position
@@ -24343,12 +24350,17 @@ run(function()
 		end
 		task.wait(0.035)
 		if originalTool then
+			handValue.Value = originalTool
 			task.spawn(function()
 				pcall(function()
-					bedwars.Client:Get(remotes.EquipItem):CallServerAsync({hand = originalTool})
+					local restoreRemote = bedwars.Client:Get(remotes.EquipItem)
+					if restoreRemote and restoreRemote.instance then
+						restoreRemote.instance:InvokeServer({hand = originalTool})
+					else
+						restoreRemote:CallServerAsync({hand = originalTool})
+					end
 				end)
 			end)
-			handValue.Value = originalTool
 		end
 		return fired and accepted
 	end
