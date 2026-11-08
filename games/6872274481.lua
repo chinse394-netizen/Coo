@@ -24273,12 +24273,27 @@ run(function()
 		for _, item in pairs(store.tools) do
 			if item and item.tool and type(item.itemType) == 'string' and item.itemType:lower():find('crossbow', 1, true) then return item end
 		end
+		local hotbar = store.inventory and store.inventory.hotbar or {}
+		for _, entry in hotbar do
+			local item = entry.item
+			local meta = item and bedwars.ItemMeta[item.itemType]
+			if item and item.tool and meta and meta.projectileSource and meta.projectileSource.ammoItemTypes and table.find(meta.projectileSource.ammoItemTypes, 'arrow') then
+				return item
+			end
+		end
 	end
 
 	local function fireCrossbow(crossbow, target)
-		if not crossbow or not crossbow.tool or not target or not target.RootPart or not bedwars.FireProjectile then return false end
+		if not crossbow or not crossbow.tool or not target or not target.RootPart then return false end
 		local source = bedwars.ItemMeta[crossbow.itemType] and bedwars.ItemMeta[crossbow.itemType].projectileSource
-		local projectile = source and (source.projectileType or source.projectile or 'arrow') or 'arrow'
+		local projectile = 'arrow'
+		if source then
+			if type(source.projectileType) == 'function' then
+				projectile = source.projectileType('arrow')
+			else
+				projectile = source.projectileType or source.projectile or 'arrow'
+			end
+		end
 		local meta = bedwars.ProjectileMeta[projectile]
 		local root = entitylib.character and entitylib.character.RootPart
 		if not meta or not root then return false end
@@ -24290,7 +24305,8 @@ run(function()
 		local fired = pcall(function()
 			local velocity = (aim - origin).Unit * speed
 			bedwars.ProjectileController:createLocalProjectile(meta, projectile, projectile, origin, '', velocity, {drawDurationSeconds = 1})
-			bedwars.FireProjectile:InvokeServer(crossbow.tool, projectile, projectile, origin, aim, velocity, httpService:GenerateGUID(true), {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045)
+			local remote = bedwars.Client:Get(remotes.FireProjectile).instance
+			remote:InvokeServer(crossbow.tool, projectile, projectile, origin, aim, velocity, httpService:GenerateGUID(true), {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045)
 		end)
 		if previous and previous ~= crossbow.tool then switchItem(previous, 0) end
 		return fired
