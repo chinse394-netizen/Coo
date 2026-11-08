@@ -26,6 +26,7 @@ local vapeEvents = setmetatable({}, {
 local playersService = cloneref(game:GetService('Players'))
 local replicatedStorage = cloneref(game:GetService('ReplicatedStorage'))
 local runService = cloneref(game:GetService('RunService'))
+local virtualInputManager = cloneref(game:GetService('VirtualInputManager'))
 local inputService = cloneref(game:GetService('UserInputService'))
 local tweenService = cloneref(game:GetService('TweenService'))
 local httpService = cloneref(game:GetService('HttpService'))
@@ -24301,6 +24302,12 @@ run(function()
 				task.wait()
 				pcall(mouse1release)
 			end
+		else
+			clicked = pcall(function()
+				virtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+				task.wait()
+				virtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+			end)
 		end
 		task.wait(0.12)
 		bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = originalSlot})
