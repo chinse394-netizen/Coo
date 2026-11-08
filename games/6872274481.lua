@@ -24296,27 +24296,50 @@ run(function()
 		local root = entitylib.character and entitylib.character.RootPart
 		local origin = root and root.Position
 		if not origin then return false end
-		local targetPosition = target.RootPart.Position
-		local velocity = (targetPosition - origin).Unit * 400
+		local targetPosition = target.RootPart.Position + Vector3.new(0, target.HipHeight and target.HipHeight * 0.15 or 0.3, 0)
+		local projectileMeta = bedwars.ProjectileMeta.crossbow_arrow or bedwars.ProjectileMeta.arrow
+		local speed = projectileMeta and projectileMeta.launchVelocity or 400
+		local aim = prediction.SolveTrajectory(origin, speed, projectileMeta and projectileMeta.gravitationalAcceleration or workspace.Gravity, targetPosition, target.RootPart.Velocity or Vector3.zero, workspace.Gravity, target.HipHeight or 2, target.Jumping and 42.6 or nil)
+		if not aim then return false end
+		local direction = (aim - origin).Unit
+		local velocity = direction * speed
 		local inventory = lplr.PlayerGui:FindFirstChild('PrivateInventory')
 		local playerInventory = inventory and inventory:FindFirstChild(lplr.Name)
-		local projectileTool = playerInventory and playerInventory:FindFirstChild(crossbow.itemType)
+		local projectileTool = crossbow.tool or (playerInventory and playerInventory:FindFirstChild(crossbow.itemType))
 		if not projectileTool then
 			bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = originalSlot})
 			return false
 		end
+		local projectileId = httpService:GenerateGUID(true)
+		local shotMeta = {
+			shotId = httpService:GenerateGUID(false),
+			drawDurationSec = 0
+		}
+		pcall(function()
+			bedwars.ProjectileController:createLocalProjectile(
+				bedwars.ItemMeta[crossbow.itemType],
+				'arrow',
+				'crossbow_arrow',
+				origin,
+				projectileId,
+				velocity,
+				shotMeta,
+				nil,
+				nil,
+				projectileTool
+			)
+		end)
+		local accepted = false
 		local fired = pcall(function()
 			local projectileFire = replicatedStorage.rbxts_include.node_modules['@rbxts'].net.out._NetManaged.ProjectileFire
-			projectileFire:InvokeServer(projectileTool, 'arrow', 'crossbow_arrow', origin, targetPosition, velocity, httpService:GenerateGUID(false), {
-				shotId = httpService:GenerateGUID(false),
-				drawDurationSec = 0
-			}, workspace:GetServerTimeNow())
+			local result = projectileFire:InvokeServer(projectileTool, 'arrow', 'crossbow_arrow', origin, targetPosition, velocity, projectileId, shotMeta, workspace:GetServerTimeNow() - 0.045)
+			accepted = result ~= nil and (typeof(result) == 'Instance' or (type(result) == 'table' and result.accepted ~= false))
 		end)
 		task.wait(0.12)
 		bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = originalSlot})
 		local restoreDeadline = tick() + 0.3
 		repeat task.wait() until store.inventory.hotbarSlot == originalSlot or tick() >= restoreDeadline
-		return fired
+		return fired and accepted
 	end
 
 	Killaura = vape.Categories.Blatant:CreateModule({
