@@ -24304,9 +24304,10 @@ run(function()
 			end
 		else
 			clicked = pcall(function()
-				virtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+				local mousePosition = inputService:GetMouseLocation()
+				virtualInputManager:SendMouseButtonEvent(mousePosition.X, mousePosition.Y, 0, true, game, 0)
 				task.wait()
-				virtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+				virtualInputManager:SendMouseButtonEvent(mousePosition.X, mousePosition.Y, 0, false, game, 0)
 			end)
 		end
 		task.wait(0.12)
