@@ -12751,6 +12751,7 @@ run(function()
 	local Shadows
 	local MeshDetail
 	local WorldTextures
+	local FlatMaterials
 	local Accessories
 	local FreezeAnimations
 	local Clouds
@@ -12760,11 +12761,11 @@ run(function()
 	local Nametags
 	local Explosions
 	local CompatibilityLighting
-	local FPSCap
 	local effects, util = {}, {}
 	local disabledEffects, disabledPostEffects = {}, {}
 	local originalMeshFidelity = {}
 	local originalTextures = {}
+	local originalMaterials = {}
 	local originalAccessories, originalLights, originalNametags = {}, {}, {}
 	local originalClouds = {}
 	local originalAnimationSpeeds, originalExplosions = {}, {}
@@ -12773,7 +12774,7 @@ run(function()
 	local originalWater, originalSpecular
 	local originalTechnology
 	local originalQualityLevel
-	local measuredFPS, frames, sampleStart = 0, 0, os.clock()
+	local measuredFPS, worstFrameMs, peakFrameMs, frames, sampleStart = 0, 0, 0, 0, os.clock()
 	local effectClasses = {
 		ParticleEmitter = true,
 		Trail = true,
@@ -12884,6 +12885,32 @@ run(function()
 			end
 			table.clear(originalTextures)
 		end
+		if FlatMaterials.Enabled then
+			for _, object in workspace:GetDescendants() do
+				if object:IsA('BasePart') then
+					local isPlayerCharacter = false
+					for _, player in playersService:GetPlayers() do
+						if player.Character and object:IsDescendantOf(player.Character) then
+							isPlayerCharacter = true
+							break
+						end
+					end
+					if not isPlayerCharacter and originalMaterials[object] == nil then
+						originalMaterials[object] = {material = object.Material, variant = object.MaterialVariant}
+						object.Material = Enum.Material.SmoothPlastic
+						object.MaterialVariant = ''
+					end
+				end
+			end
+		else
+			for object, state in originalMaterials do
+				if object.Parent then
+					object.Material = state.material
+					object.MaterialVariant = state.variant
+				end
+			end
+			table.clear(originalMaterials)
+		end
 		for _, object in workspace:GetDescendants() do
 			local isLocalCharacter = lplr.Character and object:IsDescendantOf(lplr.Character)
 			if Accessories.Enabled and not isLocalCharacter and object:IsA('BasePart') and object:FindFirstAncestorWhichIsA('Accessory') then
@@ -12978,11 +13005,14 @@ run(function()
 					if object:IsA('PostEffect') then postEffectCount += 1 end
 				end
 				vape:CreateNotification('FPS Booster', ('Scene scan: %d visual effects and %d post-processing effects found.'):format(effectCount, postEffectCount), 5)
-				FPSBoost:Clean(runService.RenderStepped:Connect(function()
+				FPSBoost:Clean(runService.RenderStepped:Connect(function(deltaTime)
 					frames += 1
+					worstFrameMs = math.max(worstFrameMs, deltaTime * 1000)
 					local elapsed = os.clock() - sampleStart
 					if elapsed >= 1 then
 						measuredFPS = math.floor(frames / elapsed)
+						peakFrameMs = worstFrameMs
+						worstFrameMs = 0
 						frames, sampleStart = 0, os.clock()
 					end
 				end))
@@ -12990,6 +13020,17 @@ run(function()
 					if Particles.Enabled and effectClasses[object.ClassName] then
 						if disabledEffects[object] == nil then disabledEffects[object] = object.Enabled end
 						object.Enabled = false
+					end
+				end))
+				FPSBoost:Clean(workspace.DescendantAdded:Connect(function(object)
+					if not FlatMaterials.Enabled or not object:IsA('BasePart') then return end
+					for _, player in playersService:GetPlayers() do
+						if player.Character and object:IsDescendantOf(player.Character) then return end
+					end
+					if originalMaterials[object] == nil then
+						originalMaterials[object] = {material = object.Material, variant = object.MaterialVariant}
+						object.Material = Enum.Material.SmoothPlastic
+						object.MaterialVariant = ''
 					end
 				end))
 				FPSBoost:Clean(workspace.DescendantAdded:Connect(function(object)
@@ -13076,6 +13117,13 @@ run(function()
 					end
 				end
 				table.clear(originalTextures)
+				for object, state in originalMaterials do
+					if object.Parent then
+						object.Material = state.material
+						object.MaterialVariant = state.variant
+					end
+				end
+				table.clear(originalMaterials)
 				for object, value in originalAccessories do if object.Parent then object.LocalTransparencyModifier = value end end
 				for object, value in originalNametags do if object.Parent then object.Enabled = value end end
 				for object, value in originalLights do if object.Parent then object.Enabled = value end end
@@ -13111,7 +13159,7 @@ run(function()
 			end
 		end,
 		ExtraText = function()
-			return measuredFPS > 0 and (measuredFPS .. ' FPS') or 'scanning'
+			return measuredFPS > 0 and (measuredFPS .. ' FPS | peak ' .. math.floor(peakFrameMs) .. 'ms') or 'scanning'
 		end,
 		Tooltip = 'Local, reversible rendering options. Your hardware and the game determine the actual FPS.'
 	})
@@ -13165,6 +13213,12 @@ run(function()
 		Default = true,
 		Tooltip = 'Strongest visual option: removes map MeshPart textures and decals locally, but leaves player avatars unchanged.'
 	})
+	FlatMaterials = FPSBoost:CreateToggle({
+		Name = 'Flat map materials',
+		Function = applyRenderOptions,
+		Default = true,
+		Tooltip = 'Aggressive: changes map parts to plain SmoothPlastic locally, removing material texture detail while keeping player characters unchanged.'
+	})
 	Accessories = FPSBoost:CreateToggle({Name = 'Accessories', Function = applyRenderOptions, Default = true, Tooltip = 'Hides other players\' accessory parts locally.'})
 	FreezeAnimations = FPSBoost:CreateToggle({Name = 'Freeze animations', Function = applyRenderOptions, Default = true, Tooltip = 'Pauses other players\' currently playing animations locally.'})
 	Clouds = FPSBoost:CreateToggle({Name = 'Clouds', Function = applyRenderOptions, Default = true, Tooltip = 'Disables local Cloud instances.'})
@@ -13174,18 +13228,6 @@ run(function()
 	Nametags = FPSBoost:CreateToggle({Name = 'Nametags', Function = applyRenderOptions, Default = true, Tooltip = 'Hides other players\' BillboardGui nametags locally.'})
 	Explosions = FPSBoost:CreateToggle({Name = 'Explosions', Function = applyRenderOptions, Default = true, Tooltip = 'Hides local Explosion visuals.'})
 	CompatibilityLighting = FPSBoost:CreateToggle({Name = 'Compatibility lighting', Function = applyRenderOptions, Default = true, Tooltip = 'Uses Roblox compatibility lighting locally.'})
-	FPSCap = FPSBoost:CreateToggle({
-		Name = 'Frame pace at 160 FPS',
-		Function = function(enabled)
-			if enabled and setfpscap then
-				setfpscap(160)
-			elseif enabled then
-				vape:CreateNotification('FPS Booster', 'Your executor does not provide setfpscap.', 5)
-			end
-		end,
-		Default = true,
-		Tooltip = 'Caps the client at 160 to improve frame pacing. It cannot raise FPS above what the current scene can render.'
-	})
 end)
 	
 run(function()
