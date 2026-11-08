@@ -26,7 +26,6 @@ local vapeEvents = setmetatable({}, {
 local playersService = cloneref(game:GetService('Players'))
 local replicatedStorage = cloneref(game:GetService('ReplicatedStorage'))
 local runService = cloneref(game:GetService('RunService'))
-local virtualInputManager = cloneref(game:GetService('VirtualInputManager'))
 local inputService = cloneref(game:GetService('UserInputService'))
 local tweenService = cloneref(game:GetService('TweenService'))
 local httpService = cloneref(game:GetService('HttpService'))
@@ -3346,13 +3345,11 @@ run(function()
 	local AnimationTween
 	local Limit
 	local LegitAura
-	local CrossbowHits
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local CrossbowHits
 	local AttackRemote = {FireServer = function() end}
 	task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
@@ -3874,7 +3871,6 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local CrossbowHits
 	local AttackRemote = {FireServer = function() end}
 	task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
@@ -4693,7 +4689,6 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local CrossbowHits
 	local AttackRemote = {FireServer = function() end}
 	task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
@@ -24217,8 +24212,6 @@ run(function()
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
 	local AttackRemote = {FireServer = function() end}
-	local CrossbowHits
-	local crossbowBusy = false
 	local function isFuryPotionInUse()
 		local hand = store.hand
 		local tool = hand and hand.tool
@@ -24241,7 +24234,6 @@ run(function()
 	end
 
 	local function getAttackData()
-		if crossbowBusy then return false end
 		-- Avoid re-equipping a sword while the Fury Potion consume animation is active.
 		if isFuryPotionInUse() then
 			return false
@@ -24270,108 +24262,6 @@ run(function()
 		end
 
 		return sword, meta
-	end
-
-	local function getCrossbow()
-		local hotbar = store.inventory and store.inventory.hotbar or {}
-		for slot, entry in hotbar do
-			local item = entry.item
-			local meta = item and bedwars.ItemMeta[item.itemType]
-			if item and type(item.itemType) == 'string' and meta and meta.projectileSource and meta.projectileSource.ammoItemTypes and table.find(meta.projectileSource.ammoItemTypes, 'arrow') and item.itemType:lower():find('crossbow', 1, true) then
-				return item, slot - 1
-			end
-		end
-		local inventoryItems = store.inventory and store.inventory.inventory and store.inventory.inventory.items or {}
-		for _, item in inventoryItems do
-			local meta = item and bedwars.ItemMeta[item.itemType]
-			if item and type(item.itemType) == 'string' and meta and meta.projectileSource and meta.projectileSource.ammoItemTypes and table.find(meta.projectileSource.ammoItemTypes, 'arrow') and item.itemType:lower():find('crossbow', 1, true) then
-				for slot, entry in hotbar do
-					if entry.item == item or entry.item.itemType == item.itemType then return item, slot - 1 end
-				end
-			end
-		end
-	end
-
-	local function fireCrossbow(crossbow, slot, target)
-		if not crossbow or slot == nil or not target or not target.RootPart then return false end
-		local arrows = getItem('arrow')
-		if not arrows then return false end
-		local inventory = lplr.PlayerGui:FindFirstChild('PrivateInventory')
-		local playerInventory = inventory and inventory:FindFirstChild(lplr.Name)
-		local projectileTool = crossbow.tool or (playerInventory and playerInventory:FindFirstChild(crossbow.itemType))
-		if not projectileTool then return false end
-		local originalTool = store.hand and store.hand.tool
-		local handValue = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
-		if not handValue then return false end
-		handValue.Value = projectileTool
-		local equipRemote = bedwars.Client:Get(remotes.EquipItem)
-		local equipInstance = equipRemote and equipRemote.instance
-		task.spawn(function()
-			pcall(function()
-				if equipInstance then
-					equipInstance:InvokeServer({hand = projectileTool})
-				else
-					equipRemote:CallServerAsync({hand = projectileTool})
-				end
-			end)
-		end)
-		task.wait(0.0475)
-		local root = entitylib.character and entitylib.character.RootPart
-		local origin = root and root.Position
-		if not origin then return false end
-		local targetPosition = target.RootPart.Position + Vector3.new(0, target.HipHeight and target.HipHeight * 0.15 or 0.3, 0)
-		local projectileMeta = bedwars.ProjectileMeta.crossbow_arrow or bedwars.ProjectileMeta.arrow
-		local speed = projectileMeta and projectileMeta.launchVelocity or 400
-		local aim = prediction.SolveTrajectory(origin, speed, projectileMeta and projectileMeta.gravitationalAcceleration or workspace.Gravity, targetPosition, target.RootPart.Velocity or Vector3.zero, workspace.Gravity, target.HipHeight or 2, target.Jumping and 42.6 or nil)
-		if not aim then return false end
-		local direction = (aim - origin).Unit
-		local velocity = direction * speed
-		local projectileId = httpService:GenerateGUID(true)
-		local shotMeta = {
-			shotId = httpService:GenerateGUID(false),
-			drawDurationSec = 0
-		}
-		pcall(function()
-			bedwars.ProjectileController:createLocalProjectile(
-				bedwars.ItemMeta[crossbow.itemType],
-				'arrow',
-				'crossbow_arrow',
-				origin,
-				projectileId,
-				velocity,
-				shotMeta,
-				nil,
-				nil,
-				projectileTool
-			)
-		end)
-		local accepted = false
-		local fired = false
-		for attempt = 1, 2 do
-			local ok = pcall(function()
-				local projectileFire = replicatedStorage.rbxts_include.node_modules['@rbxts'].net.out._NetManaged.ProjectileFire
-				local result = projectileFire:InvokeServer(projectileTool, 'arrow', 'crossbow_arrow', origin, targetPosition, velocity, projectileId, shotMeta, workspace:GetServerTimeNow() - 0.045)
-				accepted = result ~= nil and (typeof(result) == 'Instance' or (type(result) == 'table' and result.accepted ~= false))
-			end)
-			fired = fired or ok
-			if accepted then break end
-			task.wait(0.06)
-		end
-		task.wait(0.035)
-		if originalTool then
-			handValue.Value = originalTool
-			task.spawn(function()
-				pcall(function()
-					local restoreRemote = bedwars.Client:Get(remotes.EquipItem)
-					if restoreRemote and restoreRemote.instance then
-						restoreRemote.instance:InvokeServer({hand = originalTool})
-					else
-						restoreRemote:CallServerAsync({hand = originalTool})
-					end
-				end)
-			end)
-		end
-		return fired and accepted
 	end
 
 	Killaura = vape.Categories.Blatant:CreateModule({
@@ -24465,7 +24355,6 @@ run(function()
 				end
 
 				local nextAttack = 0
-				local nextCrossbow = 0
 				local lastTool
 				repeat
 					local attacked = {}
@@ -24566,17 +24455,6 @@ run(function()
 											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
 											store.attackReachUpdate = tick() + 1
-											if CrossbowHits.Enabled and tick() >= nextCrossbow then
-												local crossbow, crossbowSlot = getCrossbow()
-												if crossbow and not crossbowBusy then
-													nextCrossbow = tick() + 0.3
-													task.spawn(function()
-														crossbowBusy = true
-														pcall(fireCrossbow, crossbow, crossbowSlot, v)
-														crossbowBusy = false
-													end)
-												end
-											end
 										else
 											-- Do not wait out a full attack interval after a failed remote.
 											nextAttack = now + (1 / math.clamp(UpdateRate.Value, 60, 120))
@@ -24909,10 +24787,6 @@ run(function()
 	LegitAura = Killaura:CreateToggle({
 		Name = 'Swing only',
 		Tooltip = 'Only attacks while swinging manually'
-	})
-	CrossbowHits = Killaura:CreateToggle({
-		Name = 'Crossbow hits',
-		Tooltip = 'Fires a crossbow between sword attacks'
 	})
 
 	task.defer(function()
