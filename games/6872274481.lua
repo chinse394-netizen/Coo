@@ -24270,21 +24270,18 @@ run(function()
 	end
 
 	local function getCrossbow()
-		for _, item in pairs(store.tools) do
-			if item and item.tool and type(item.itemType) == 'string' and item.itemType:lower():find('crossbow', 1, true) then return item end
-		end
 		local hotbar = store.inventory and store.inventory.hotbar or {}
-		for _, entry in hotbar do
+		for slot, entry in hotbar do
 			local item = entry.item
 			local meta = item and bedwars.ItemMeta[item.itemType]
-			if item and item.tool and meta and meta.projectileSource and meta.projectileSource.ammoItemTypes and table.find(meta.projectileSource.ammoItemTypes, 'arrow') then
-				return item
+			if item and meta and meta.projectileSource and meta.projectileSource.ammoItemTypes and table.find(meta.projectileSource.ammoItemTypes, 'arrow') and item.itemType:lower():find('crossbow', 1, true) then
+				return item, slot - 1
 			end
 		end
 	end
 
-	local function fireCrossbow(crossbow, target)
-		if not crossbow or not crossbow.tool or not target or not target.RootPart then return false end
+	local function fireCrossbow(crossbow, slot, target)
+		if not crossbow or slot == nil or not target or not target.RootPart then return false end
 		local source = bedwars.ItemMeta[crossbow.itemType] and bedwars.ItemMeta[crossbow.itemType].projectileSource
 		local projectile = 'arrow'
 		if source then
@@ -24301,14 +24298,19 @@ run(function()
 		local aim = prediction.SolveTrajectory(origin, speed, meta.gravitationalAcceleration or workspace.Gravity, target.RootPart.Position, target.RootPart.Velocity or Vector3.zero, workspace.Gravity, target.HipHeight, target.Jumping and 42.6 or nil)
 		if not aim then return false end
 		local previous = store.hand and store.hand.tool
-		switchItem(crossbow.tool, 0.05)
+		bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = slot})
+		local equipDeadline = tick() + 0.25
+		repeat task.wait() until tick() >= equipDeadline or (store.hand and store.hand.itemType == crossbow.itemType)
+		local crossbowTool = store.hand and store.hand.tool
+		if not crossbowTool then return false end
 		local fired = pcall(function()
 			local velocity = (aim - origin).Unit * speed
 			bedwars.ProjectileController:createLocalProjectile(meta, projectile, projectile, origin, '', velocity, {drawDurationSeconds = 1})
 			local remote = bedwars.Client:Get(remotes.FireProjectile).instance
-			remote:InvokeServer(crossbow.tool, projectile, projectile, origin, aim, velocity, httpService:GenerateGUID(true), {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045)
+			remote:InvokeServer(crossbowTool, projectile, projectile, origin, aim, velocity, httpService:GenerateGUID(true), {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045)
 		end)
-		if previous and previous ~= crossbow.tool then switchItem(previous, 0) end
+		task.wait(0.12)
+		if previous then switchItem(previous, 0.08) end
 		return fired
 	end
 
@@ -24425,8 +24427,8 @@ run(function()
 
 							if #plrs > 0 and not isFuryPotionInUse() then
 								if CrossbowHits.Enabled and tick() >= nextCrossbow then
-									local crossbow = getCrossbow()
-									if crossbow and fireCrossbow(crossbow, plrs[1]) then nextCrossbow = tick() + 0.15 end
+									local crossbow, crossbowSlot = getCrossbow()
+									if crossbow and fireCrossbow(crossbow, crossbowSlot, plrs[1]) then nextCrossbow = tick() + 0.75 end
 								end
 								local handItem = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
 								if lastTool ~= sword.tool or (handItem and handItem.Value ~= sword.tool) then
