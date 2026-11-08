@@ -24308,8 +24308,12 @@ run(function()
 		local fired = pcall(function()
 			local velocity = (aim - origin).Unit * speed
 			bedwars.ProjectileController:createLocalProjectile(meta, projectile, projectile, origin, '', velocity, {drawDurationSeconds = 1})
-			local remote = bedwars.Client:Get(remotes.FireProjectile).instance
-			remote:InvokeServer(crossbowTool, projectile, projectile, origin, aim, velocity, httpService:GenerateGUID(true), {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045)
+			local args = {crossbowTool, projectile, projectile, origin, aim, velocity, httpService:GenerateGUID(true), {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045}
+			if type(bedwars.FireProjectile) == 'function' then
+				bedwars.FireProjectile(bedwars.ProjectileController, unpack(args))
+			else
+				bedwars.Client:Get(remotes.FireProjectile).instance:InvokeServer(unpack(args))
+			end
 		end)
 		task.wait(0.12)
 		if previous then switchItem(previous, 0.08) end
