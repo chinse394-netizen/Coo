@@ -3345,11 +3345,13 @@ run(function()
 	local AnimationTween
 	local Limit
 	local LegitAura
+	local CrossbowHits
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
+	local CrossbowHits
 	local AttackRemote = {FireServer = function() end}
 	task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
@@ -3871,6 +3873,7 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
+	local CrossbowHits
 	local AttackRemote = {FireServer = function() end}
 	task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
@@ -4689,6 +4692,7 @@ run(function()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
+	local CrossbowHits
 	local AttackRemote = {FireServer = function() end}
 	task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
@@ -24212,6 +24216,7 @@ run(function()
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
 	local AttackRemote = {FireServer = function() end}
+	local CrossbowHits
 	local function isFuryPotionInUse()
 		local hand = store.hand
 		local tool = hand and hand.tool
@@ -24262,6 +24267,33 @@ run(function()
 		end
 
 		return sword, meta
+	end
+
+	local function getCrossbow()
+		for _, item in pairs(store.tools) do
+			if item and item.tool and type(item.itemType) == 'string' and item.itemType:lower():find('crossbow', 1, true) then return item end
+		end
+	end
+
+	local function fireCrossbow(crossbow, target)
+		if not crossbow or not crossbow.tool or not target or not target.RootPart or not bedwars.FireProjectile then return false end
+		local source = bedwars.ItemMeta[crossbow.itemType] and bedwars.ItemMeta[crossbow.itemType].projectileSource
+		local projectile = source and (source.projectileType or source.projectile or 'arrow') or 'arrow'
+		local meta = bedwars.ProjectileMeta[projectile]
+		local root = entitylib.character and entitylib.character.RootPart
+		if not meta or not root then return false end
+		local origin, speed = root.Position, meta.launchVelocity or 100
+		local aim = prediction.SolveTrajectory(origin, speed, meta.gravitationalAcceleration or workspace.Gravity, target.RootPart.Position, target.RootPart.Velocity or Vector3.zero, workspace.Gravity, target.HipHeight, target.Jumping and 42.6 or nil)
+		if not aim then return false end
+		local previous = store.hand and store.hand.tool
+		switchItem(crossbow.tool, 0.05)
+		local fired = pcall(function()
+			local velocity = (aim - origin).Unit * speed
+			bedwars.ProjectileController:createLocalProjectile(meta, projectile, projectile, origin, '', velocity, {drawDurationSeconds = 1})
+			bedwars.FireProjectile:InvokeServer(crossbow.tool, projectile, projectile, origin, aim, velocity, httpService:GenerateGUID(true), {drawDurationSeconds = 1, shotId = httpService:GenerateGUID(false)}, workspace:GetServerTimeNow() - 0.045)
+		end)
+		if previous and previous ~= crossbow.tool then switchItem(previous, 0) end
+		return fired
 	end
 
 	Killaura = vape.Categories.Blatant:CreateModule({
@@ -24355,6 +24387,7 @@ run(function()
 				end
 
 				local nextAttack = 0
+				local nextCrossbow = 0
 				local lastTool
 				repeat
 					local attacked = {}
@@ -24375,6 +24408,10 @@ run(function()
 							})
 
 							if #plrs > 0 and not isFuryPotionInUse() then
+								if CrossbowHits.Enabled and tick() >= nextCrossbow then
+									local crossbow = getCrossbow()
+									if crossbow and fireCrossbow(crossbow, plrs[1]) then nextCrossbow = tick() + 0.15 end
+								end
 								local handItem = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
 								if lastTool ~= sword.tool or (handItem and handItem.Value ~= sword.tool) then
 									local switched = switchItem(sword.tool, 0.08)
@@ -24787,6 +24824,10 @@ run(function()
 	LegitAura = Killaura:CreateToggle({
 		Name = 'Swing only',
 		Tooltip = 'Only attacks while swinging manually'
+	})
+	CrossbowHits = Killaura:CreateToggle({
+		Name = 'Crossbow hits',
+		Tooltip = 'Fires a crossbow between sword attacks'
 	})
 
 	task.defer(function()
