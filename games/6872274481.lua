@@ -24277,8 +24277,17 @@ run(function()
 		for slot, entry in hotbar do
 			local item = entry.item
 			local meta = item and bedwars.ItemMeta[item.itemType]
-			if item and meta and meta.projectileSource and meta.projectileSource.ammoItemTypes and table.find(meta.projectileSource.ammoItemTypes, 'arrow') and item.itemType:lower():find('crossbow', 1, true) then
+			if item and type(item.itemType) == 'string' and meta and meta.projectileSource and meta.projectileSource.ammoItemTypes and table.find(meta.projectileSource.ammoItemTypes, 'arrow') and item.itemType:lower():find('crossbow', 1, true) then
 				return item, slot - 1
+			end
+		end
+		local inventoryItems = store.inventory and store.inventory.inventory and store.inventory.inventory.items or {}
+		for _, item in inventoryItems do
+			local meta = item and bedwars.ItemMeta[item.itemType]
+			if item and type(item.itemType) == 'string' and meta and meta.projectileSource and meta.projectileSource.ammoItemTypes and table.find(meta.projectileSource.ammoItemTypes, 'arrow') and item.itemType:lower():find('crossbow', 1, true) then
+				for slot, entry in hotbar do
+					if entry.item == item or entry.item.itemType == item.itemType then return item, slot - 1 end
+				end
 			end
 		end
 	end
@@ -24286,7 +24295,7 @@ run(function()
 	local function fireCrossbow(crossbow, slot, target)
 		if not crossbow or slot == nil or not target or not target.RootPart then return false end
 		local arrows = getItem('arrow')
-		if not arrows or (arrows.amount or 0) < 1 then return false end
+		if not arrows then return false end
 		local inventory = lplr.PlayerGui:FindFirstChild('PrivateInventory')
 		local playerInventory = inventory and inventory:FindFirstChild(lplr.Name)
 		local projectileTool = crossbow.tool or (playerInventory and playerInventory:FindFirstChild(crossbow.itemType))
