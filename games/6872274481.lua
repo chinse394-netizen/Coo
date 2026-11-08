@@ -24217,6 +24217,7 @@ run(function()
 	local animationHooksInstalled = false
 	local AttackRemote = {FireServer = function() end}
 	local CrossbowHits
+	local crossbowBusy = false
 	local function isFuryPotionInUse()
 		local hand = store.hand
 		local tool = hand and hand.tool
@@ -24239,6 +24240,7 @@ run(function()
 	end
 
 	local function getAttackData()
+		if crossbowBusy then return false end
 		-- Avoid re-equipping a sword while the Fury Potion consume animation is active.
 		if isFuryPotionInUse() then
 			return false
@@ -24426,10 +24428,6 @@ run(function()
 							})
 
 							if #plrs > 0 and not isFuryPotionInUse() then
-								if CrossbowHits.Enabled and tick() >= nextCrossbow then
-									local crossbow, crossbowSlot = getCrossbow()
-									if crossbow and fireCrossbow(crossbow, crossbowSlot, plrs[1]) then nextCrossbow = tick() + 0.75 end
-								end
 								local handItem = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
 								if lastTool ~= sword.tool or (handItem and handItem.Value ~= sword.tool) then
 									local switched = switchItem(sword.tool, 0.08)
@@ -24510,6 +24508,17 @@ run(function()
 											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
 											store.attackReachUpdate = tick() + 1
+											if CrossbowHits.Enabled and tick() >= nextCrossbow then
+												local crossbow, crossbowSlot = getCrossbow()
+												if crossbow and not crossbowBusy then
+													nextCrossbow = tick() + 0.75
+													task.spawn(function()
+														crossbowBusy = true
+														pcall(fireCrossbow, crossbow, crossbowSlot, v)
+														crossbowBusy = false
+													end)
+												end
+											end
 										else
 											-- Do not wait out a full attack interval after a failed remote.
 											nextAttack = now + (1 / math.clamp(UpdateRate.Value, 60, 120))
