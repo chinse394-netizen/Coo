@@ -24287,11 +24287,18 @@ run(function()
 		if not crossbow or slot == nil or not target or not target.RootPart then return false end
 		local arrows = getItem('arrow')
 		if not arrows or (arrows.amount or 0) < 1 then return false end
-		local originalSlot = store.inventory.hotbarSlot
-		bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = slot})
-		local equipDeadline = tick() + 0.16
-		repeat task.wait() until store.inventory.hotbarSlot == slot or tick() >= equipDeadline
-		if store.inventory.hotbarSlot ~= slot then return false end
+		local inventory = lplr.PlayerGui:FindFirstChild('PrivateInventory')
+		local playerInventory = inventory and inventory:FindFirstChild(lplr.Name)
+		local projectileTool = crossbow.tool or (playerInventory and playerInventory:FindFirstChild(crossbow.itemType))
+		if not projectileTool then return false end
+		local originalTool = store.hand and store.hand.tool
+		local handValue = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
+		if not handValue then return false end
+		local equipped = pcall(function()
+			bedwars.Client:Get(remotes.EquipItem):CallServerAsync({hand = projectileTool}):timeout(0.35):await()
+		end)
+		if not equipped then return false end
+		handValue.Value = projectileTool
 		task.wait(0.0475)
 		local root = entitylib.character and entitylib.character.RootPart
 		local origin = root and root.Position
@@ -24303,13 +24310,6 @@ run(function()
 		if not aim then return false end
 		local direction = (aim - origin).Unit
 		local velocity = direction * speed
-		local inventory = lplr.PlayerGui:FindFirstChild('PrivateInventory')
-		local playerInventory = inventory and inventory:FindFirstChild(lplr.Name)
-		local projectileTool = crossbow.tool or (playerInventory and playerInventory:FindFirstChild(crossbow.itemType))
-		if not projectileTool then
-			bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = originalSlot})
-			return false
-		end
 		local projectileId = httpService:GenerateGUID(true)
 		local shotMeta = {
 			shotId = httpService:GenerateGUID(false),
@@ -24342,9 +24342,14 @@ run(function()
 			task.wait(0.06)
 		end
 		task.wait(0.035)
-		bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = originalSlot})
-		local restoreDeadline = tick() + 0.16
-		repeat task.wait() until store.inventory.hotbarSlot == originalSlot or tick() >= restoreDeadline
+		if originalTool then
+			task.spawn(function()
+				pcall(function()
+					bedwars.Client:Get(remotes.EquipItem):CallServerAsync({hand = originalTool})
+				end)
+			end)
+			handValue.Value = originalTool
+		end
 		return fired and accepted
 	end
 
