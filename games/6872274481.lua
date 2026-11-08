@@ -24293,28 +24293,30 @@ run(function()
 		repeat task.wait() until store.inventory.hotbarSlot == slot or tick() >= equipDeadline
 		if store.inventory.hotbarSlot ~= slot then return false end
 		task.wait(0.08)
-		local clicked = false
-		if type(mouse1click) == 'function' then
-			clicked = pcall(mouse1click)
-		elseif type(mouse1press) == 'function' and type(mouse1release) == 'function' then
-			clicked = pcall(mouse1press)
-			if clicked then
-				task.wait()
-				pcall(mouse1release)
-			end
-		else
-			clicked = pcall(function()
-				local mousePosition = inputService:GetMouseLocation()
-				virtualInputManager:SendMouseButtonEvent(mousePosition.X, mousePosition.Y, 0, true, game, 0)
-				task.wait()
-				virtualInputManager:SendMouseButtonEvent(mousePosition.X, mousePosition.Y, 0, false, game, 0)
-			end)
+		local root = entitylib.character and entitylib.character.RootPart
+		local origin = root and root.Position
+		if not origin then return false end
+		local targetPosition = target.RootPart.Position
+		local velocity = (targetPosition - origin).Unit * 400
+		local inventory = lplr.PlayerGui:FindFirstChild('PrivateInventory')
+		local playerInventory = inventory and inventory:FindFirstChild(lplr.Name)
+		local projectileTool = playerInventory and playerInventory:FindFirstChild(crossbow.itemType)
+		if not projectileTool then
+			bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = originalSlot})
+			return false
 		end
+		local fired = pcall(function()
+			local projectileFire = replicatedStorage.rbxts_include.node_modules['@rbxts'].net.out._NetManaged.ProjectileFire
+			projectileFire:InvokeServer(projectileTool, 'arrow', 'crossbow_arrow', origin, targetPosition, velocity, httpService:GenerateGUID(false), {
+				shotId = httpService:GenerateGUID(false),
+				drawDurationSec = 0
+			}, workspace:GetServerTimeNow())
+		end)
 		task.wait(0.12)
 		bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = originalSlot})
 		local restoreDeadline = tick() + 0.3
 		repeat task.wait() until store.inventory.hotbarSlot == originalSlot or tick() >= restoreDeadline
-		return clicked
+		return fired
 	end
 
 	Killaura = vape.Categories.Blatant:CreateModule({
