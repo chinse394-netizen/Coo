@@ -24289,10 +24289,10 @@ run(function()
 		if not arrows or (arrows.amount or 0) < 1 then return false end
 		local originalSlot = store.inventory.hotbarSlot
 		bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = slot})
-		local equipDeadline = tick() + 0.3
+		local equipDeadline = tick() + 0.16
 		repeat task.wait() until store.inventory.hotbarSlot == slot or tick() >= equipDeadline
 		if store.inventory.hotbarSlot ~= slot then return false end
-		task.wait(0.08)
+		task.wait(0.0475)
 		local root = entitylib.character and entitylib.character.RootPart
 		local origin = root and root.Position
 		if not origin then return false end
@@ -24341,9 +24341,9 @@ run(function()
 			if accepted then break end
 			task.wait(0.06)
 		end
-		task.wait(0.12)
+		task.wait(0.035)
 		bedwars.Store:dispatch({type = 'InventorySelectHotbarSlot', slot = originalSlot})
-		local restoreDeadline = tick() + 0.3
+		local restoreDeadline = tick() + 0.16
 		repeat task.wait() until store.inventory.hotbarSlot == originalSlot or tick() >= restoreDeadline
 		return fired and accepted
 	end
@@ -24543,7 +24543,7 @@ run(function()
 											if CrossbowHits.Enabled and tick() >= nextCrossbow then
 												local crossbow, crossbowSlot = getCrossbow()
 												if crossbow and not crossbowBusy then
-													nextCrossbow = tick() + 0.75
+													nextCrossbow = tick() + 0.3
 													task.spawn(function()
 														crossbowBusy = true
 														pcall(fireCrossbow, crossbow, crossbowSlot, v)
