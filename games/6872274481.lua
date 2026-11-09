@@ -12743,38 +12743,27 @@ run(function()
 end)
 	
 run(function()
+	--[[
+		FPS Booster (rewrite)
+		- Lifts the FPS cap (setfpscap) so FPS is not stuck at 60. This is the big one.
+		- Scans the map ONCE and spreads the work over frames (no freeze when you turn it on).
+		- One DescendantAdded hook that just queues new parts (no stutter when blocks get placed).
+		- Every change is saved and fully undone when you turn it off.
+	]]
 	local FPSBoost
-	local Kill
-	local Visualizer
-	local Particles
-	local PostProcessing
-	local Shadows
-	local MeshDetail
-	local WorldTextures
-	local FlatMaterials
-	local Accessories
-	local FreezeAnimations
-	local Clouds
-	local Lights
-	local Water
-	local Reflections
-	local Nametags
-	local Explosions
-	local CompatibilityLighting
+	local Kill, Visualizer
+	local UnlockFPS, FPSCap
+	local Particles, PostProcessing, Shadows, MeshDetail, WorldTextures, FlatMaterials
+	local Accessories, FreezeAnimations, Clouds, Lights, Water, Reflections, Nametags, Explosions, CompatibilityLighting
 	local effects, util = {}, {}
-	local disabledEffects, disabledPostEffects = {}, {}
-	local originalMeshFidelity = {}
-	local originalTextures = {}
-	local originalMaterials = {}
-	local originalAccessories, originalLights, originalNametags = {}, {}, {}
-	local originalClouds = {}
-	local originalAnimationSpeeds, originalExplosions = {}, {}
-	local originalGlobalShadows
-	local originalTerrainDecoration
-	local originalWater, originalSpecular
-	local originalTechnology
-	local originalQualityLevel
+	local oldAddNametag
+	local oldFpsCap
+	local saved = setmetatable({}, {__mode = 'k'})
+	local savedTracks = setmetatable({}, {__mode = 'k'})
+	local queue, queueHead, queueTail = {}, 1, 0
+	local reapplyPending = false
 	local measuredFPS, worstFrameMs, peakFrameMs, frames, sampleStart = 0, 0, 0, 0, os.clock()
+	local CHUNK = 600
 	local effectClasses = {
 		ParticleEmitter = true,
 		Trail = true,
@@ -12784,227 +12773,192 @@ run(function()
 		Sparkles = true
 	}
 
-	local function setParticles(disabled)
-		if disabled then
-			for _, object in workspace:GetDescendants() do
-				if effectClasses[object.ClassName] then
-					if disabledEffects[object] == nil then disabledEffects[object] = object.Enabled end
-					object.Enabled = false
-				end
-			end
-		else
-			for object, enabled in disabledEffects do
-				if object.Parent then object.Enabled = enabled end
-			end
-			table.clear(disabledEffects)
+	-- Save the old value once, then set the new one.
+	local function set(object, prop, value)
+		local entry = saved[object]
+		if not entry then
+			entry = {}
+			saved[object] = entry
 		end
+		if entry[prop] == nil then
+			local ok, old = pcall(function() return object[prop] end)
+			if not ok or old == nil then return end
+			entry[prop] = old
+		end
+		pcall(function() object[prop] = value end)
 	end
 
-	local function setPostProcessing(disabled)
-		if disabled then
-			for _, object in lightingService:GetChildren() do
-				if object:IsA('PostEffect') then
-					if disabledPostEffects[object] == nil then disabledPostEffects[object] = object.Enabled end
-					object.Enabled = false
-				end
+	local function restoreAll()
+		for object, entry in saved do
+			for prop, value in entry do
+				pcall(function() object[prop] = value end)
 			end
-		else
-			for object, enabled in disabledPostEffects do
-				if object.Parent then object.Enabled = enabled end
-			end
-			table.clear(disabledPostEffects)
 		end
+		table.clear(saved)
+		for track, speed in savedTracks do
+			pcall(function() track:AdjustSpeed(speed) end)
+		end
+		table.clear(savedTracks)
 	end
 
-	local function applyRenderOptions()
-		if not FPSBoost.Enabled then return end
-		setParticles(Particles.Enabled)
-		setPostProcessing(PostProcessing.Enabled)
-		if Shadows.Enabled then
-			if originalGlobalShadows == nil then originalGlobalShadows = lightingService.GlobalShadows end
-			lightingService.GlobalShadows = false
-		elseif originalGlobalShadows ~= nil then
-			lightingService.GlobalShadows = originalGlobalShadows
-			originalGlobalShadows = nil
+	-- Walk up the tree once instead of looping every player for every part.
+	local function getCharacterInfo(object)
+		local node = object
+		while node and node ~= workspace do
+			if node.ClassName == 'Model' then
+				local player = playersService:GetPlayerFromCharacter(node)
+				if player then return true, player == lplr end
+			end
+			node = node.Parent
 		end
-		if MeshDetail.Enabled then
-			pcall(function()
-				if originalQualityLevel == nil then originalQualityLevel = settings().Rendering.QualityLevel end
-				settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-			end)
-			if originalTerrainDecoration == nil then originalTerrainDecoration = workspace.Terrain.Decoration end
-			workspace.Terrain.Decoration = false
-			for _, object in workspace:GetDescendants() do
-				if object:IsA('MeshPart') then
-					if originalMeshFidelity[object] == nil then originalMeshFidelity[object] = object.RenderFidelity end
-					pcall(function() object.RenderFidelity = Enum.RenderFidelity.Performance end)
+		return false, false
+	end
+
+	local function processObject(object)
+		local className = object.ClassName
+		if effectClasses[className] then
+			if Particles.Enabled then set(object, 'Enabled', false) end
+			return
+		elseif className == 'Explosion' then
+			if Explosions.Enabled then set(object, 'Visible', false) end
+			return
+		elseif className == 'Clouds' then
+			if Clouds.Enabled then set(object, 'Enabled', false) end
+			return
+		elseif object:IsA('Light') then
+			if Lights.Enabled then set(object, 'Enabled', false) end
+			return
+		end
+
+		local isBasePart = object:IsA('BasePart')
+		local isOverlay = className == 'Decal' or className == 'Texture'
+		local isBillboard = className == 'BillboardGui'
+		local isHumanoid = className == 'Humanoid'
+		if not (isBasePart or isOverlay or isBillboard or isHumanoid) then return end
+
+		local isCharacter, isLocal = getCharacterInfo(object)
+		if isBasePart then
+			if isCharacter then
+				if Accessories.Enabled and not isLocal and object.Parent and object.Parent.ClassName == 'Accessory' then
+					set(object, 'LocalTransparencyModifier', 1)
 				end
+				return
 			end
-		else
-			if originalQualityLevel ~= nil then
-				pcall(function() settings().Rendering.QualityLevel = originalQualityLevel end)
-				originalQualityLevel = nil
+			if Shadows.Enabled then set(object, 'CastShadow', false) end
+			if FlatMaterials.Enabled then
+				set(object, 'Material', Enum.Material.SmoothPlastic)
+				set(object, 'MaterialVariant', '')
+				set(object, 'Reflectance', 0)
 			end
-			if originalTerrainDecoration ~= nil then
-				workspace.Terrain.Decoration = originalTerrainDecoration
-				originalTerrainDecoration = nil
+			if className == 'MeshPart' then
+				if WorldTextures.Enabled then set(object, 'TextureID', '') end
+				if MeshDetail.Enabled then set(object, 'RenderFidelity', Enum.RenderFidelity.Performance) end
 			end
-			for object, fidelity in originalMeshFidelity do
-				if object.Parent then pcall(function() object.RenderFidelity = fidelity end) end
-			end
-			table.clear(originalMeshFidelity)
-		end
-		if WorldTextures.Enabled then
-			for _, object in workspace:GetDescendants() do
-				local isPlayerCharacter = false
-				for _, player in playersService:GetPlayers() do
-					if player.Character and object:IsDescendantOf(player.Character) then
-						isPlayerCharacter = true
-						break
-					end
-				end
-				if not isPlayerCharacter then
-					if object:IsA('MeshPart') and originalTextures[object] == nil then
-						originalTextures[object] = {kind = 'MeshPart', textureId = object.TextureID}
-						pcall(function() object.TextureID = '' end)
-					elseif (object:IsA('Decal') or object:IsA('Texture')) and originalTextures[object] == nil then
-						originalTextures[object] = {kind = 'Overlay', transparency = object.Transparency}
-						object.Transparency = 1
-					end
-				end
-			end
-		else
-			for object, state in originalTextures do
-				if object.Parent then
-					if state.kind == 'MeshPart' then
-						pcall(function() object.TextureID = state.textureId end)
-					else
-						object.Transparency = state.transparency
-					end
-				end
-			end
-			table.clear(originalTextures)
-		end
-		if FlatMaterials.Enabled then
-			for _, object in workspace:GetDescendants() do
-				if object:IsA('BasePart') then
-					local isPlayerCharacter = false
-					for _, player in playersService:GetPlayers() do
-						if player.Character and object:IsDescendantOf(player.Character) then
-							isPlayerCharacter = true
-							break
-						end
-					end
-					if not isPlayerCharacter and originalMaterials[object] == nil then
-						originalMaterials[object] = {material = object.Material, variant = object.MaterialVariant}
-						object.Material = Enum.Material.SmoothPlastic
-						object.MaterialVariant = ''
-					end
-				end
-			end
-		else
-			for object, state in originalMaterials do
-				if object.Parent then
-					object.Material = state.material
-					object.MaterialVariant = state.variant
-				end
-			end
-			table.clear(originalMaterials)
-		end
-		for _, object in workspace:GetDescendants() do
-			local isLocalCharacter = lplr.Character and object:IsDescendantOf(lplr.Character)
-			if Accessories.Enabled and not isLocalCharacter and object:IsA('BasePart') and object:FindFirstAncestorWhichIsA('Accessory') then
-				if originalAccessories[object] == nil then originalAccessories[object] = object.LocalTransparencyModifier end
-				object.LocalTransparencyModifier = 1
-			elseif Nametags.Enabled and not isLocalCharacter and object:IsA('BillboardGui') then
-				if originalNametags[object] == nil then originalNametags[object] = object.Enabled end
-				object.Enabled = false
-			elseif Lights.Enabled and object:IsA('Light') then
-				if originalLights[object] == nil then originalLights[object] = object.Enabled end
-				object.Enabled = false
-			elseif Clouds.Enabled and object:IsA('Clouds') then
-				if originalClouds[object] == nil then originalClouds[object] = object.Enabled end
-				object.Enabled = false
-			end
-		end
-		if not Accessories.Enabled then
-			for object, value in originalAccessories do if object.Parent then object.LocalTransparencyModifier = value end end
-			table.clear(originalAccessories)
-		end
-		if not Nametags.Enabled then
-			for object, value in originalNametags do if object.Parent then object.Enabled = value end end
-			table.clear(originalNametags)
-		end
-		if not Lights.Enabled then
-			for object, value in originalLights do if object.Parent then object.Enabled = value end end
-			table.clear(originalLights)
-		end
-		if not Clouds.Enabled then
-			for object, value in originalClouds do if object.Parent then object.Enabled = value end end
-			table.clear(originalClouds)
-		end
-		if Water.Enabled then
-			if not originalWater then
-				originalWater = {workspace.Terrain.WaterWaveSize, workspace.Terrain.WaterWaveSpeed, workspace.Terrain.WaterReflectance}
-			end
-			workspace.Terrain.WaterWaveSize, workspace.Terrain.WaterWaveSpeed, workspace.Terrain.WaterReflectance = 0, 0, 0
-		elseif originalWater then
-			workspace.Terrain.WaterWaveSize, workspace.Terrain.WaterWaveSpeed, workspace.Terrain.WaterReflectance = unpack(originalWater)
-			originalWater = nil
-		end
-		if Reflections.Enabled then
-			if originalSpecular == nil then originalSpecular = lightingService.EnvironmentSpecularScale end
-			lightingService.EnvironmentSpecularScale = 0
-		elseif originalSpecular ~= nil then
-			lightingService.EnvironmentSpecularScale = originalSpecular
-			originalSpecular = nil
-		end
-		if CompatibilityLighting.Enabled then
-			if originalTechnology == nil then originalTechnology = lightingService.Technology end
-			pcall(function() lightingService.Technology = Enum.Technology.Compatibility end)
-		elseif originalTechnology ~= nil then
-			pcall(function() lightingService.Technology = originalTechnology end)
-			originalTechnology = nil
-		end
-		for _, object in workspace:GetDescendants() do
-			if Explosions.Enabled and object:IsA('Explosion') then
-				if originalExplosions[object] == nil then originalExplosions[object] = object.Visible end
-				object.Visible = false
-			elseif FreezeAnimations.Enabled and object:IsA('Humanoid') and object.Parent ~= lplr.Character then
+		elseif isOverlay then
+			if WorldTextures.Enabled and not isCharacter then set(object, 'Transparency', 1) end
+		elseif isBillboard then
+			if Nametags.Enabled and not isLocal then set(object, 'Enabled', false) end
+		elseif isHumanoid then
+			if FreezeAnimations.Enabled and isCharacter and not isLocal then
 				local animator = object:FindFirstChildOfClass('Animator')
 				if animator then
 					for _, track in animator:GetPlayingAnimationTracks() do
-						if originalAnimationSpeeds[track] == nil then
+						if savedTracks[track] == nil then
 							local ok, speed = pcall(function() return track.Speed end)
-							if ok then originalAnimationSpeeds[track] = speed end
+							if ok then savedTracks[track] = speed end
 						end
 						pcall(function() track:AdjustSpeed(0) end)
 					end
 				end
 			end
 		end
-		if not Explosions.Enabled then
-			for object, visible in originalExplosions do if object.Parent then object.Visible = visible end end
-			table.clear(originalExplosions)
-		end
-		if not FreezeAnimations.Enabled then
-			for track, speed in originalAnimationSpeeds do pcall(function() track:AdjustSpeed(speed) end) end
-			table.clear(originalAnimationSpeeds)
+	end
+
+	local function processLighting(object)
+		if PostProcessing.Enabled and object:IsA('PostEffect') then
+			set(object, 'Enabled', false)
 		end
 	end
-	
+
+	local function applyGlobal()
+		local terrain = workspace.Terrain
+		if Shadows.Enabled then
+			set(lightingService, 'GlobalShadows', false)
+			set(lightingService, 'ShadowSoftness', 0)
+		end
+		if MeshDetail.Enabled then
+			set(terrain, 'Decoration', false)
+			local ok, rendering = pcall(function() return settings().Rendering end)
+			if ok and rendering then
+				set(rendering, 'QualityLevel', Enum.QualityLevel.Level01)
+			end
+		end
+		if Water.Enabled then
+			set(terrain, 'WaterWaveSize', 0)
+			set(terrain, 'WaterWaveSpeed', 0)
+			set(terrain, 'WaterReflectance', 0)
+		end
+		if Reflections.Enabled then
+			set(lightingService, 'EnvironmentSpecularScale', 0)
+		end
+		if CompatibilityLighting.Enabled then
+			set(lightingService, 'Technology', Enum.Technology.Compatibility)
+		end
+		for _, object in lightingService:GetChildren() do
+			processLighting(object)
+		end
+	end
+
+	local function queueObject(object)
+		queueTail += 1
+		queue[queueTail] = object
+	end
+
+	local function rescan()
+		table.clear(queue)
+		queueHead, queueTail = 1, 0
+		for _, object in workspace:GetDescendants() do
+			queueObject(object)
+		end
+	end
+
+	local function applyFpsCap()
+		if not setfpscap then return end
+		if FPSBoost.Enabled and UnlockFPS.Enabled then
+			if oldFpsCap == nil then
+				local ok, cap = pcall(function() return getfpscap and getfpscap() end)
+				oldFpsCap = (ok and cap) or 60
+			end
+			pcall(setfpscap, FPSCap.Value)
+		elseif oldFpsCap ~= nil then
+			pcall(setfpscap, oldFpsCap)
+			oldFpsCap = nil
+		end
+	end
+
+	-- Toggle changes: undo everything, then redo with the new settings (batched, once per frame max).
+	local function reapply()
+		if not FPSBoost or not FPSBoost.Enabled or reapplyPending then return end
+		reapplyPending = true
+		task.defer(function()
+			reapplyPending = false
+			if not FPSBoost.Enabled then return end
+			restoreAll()
+			applyGlobal()
+			rescan()
+		end)
+	end
+
 	FPSBoost = vape.Categories.Utility:CreateModule({
 		Name = 'FPSBooster',
 		Function = function(callback)
 			if callback then
-				local effectCount, postEffectCount = 0, 0
-				for _, object in workspace:GetDescendants() do
-					if effectClasses[object.ClassName] then effectCount += 1 end
+				if UnlockFPS.Enabled and not setfpscap then
+					vape:CreateNotification('FPS Booster', 'Your executor has no setfpscap, so the FPS cap cannot be lifted.', 6, 'warning')
 				end
-				for _, object in lightingService:GetChildren() do
-					if object:IsA('PostEffect') then postEffectCount += 1 end
-				end
-				vape:CreateNotification('FPS Booster', ('Scene scan: %d visual effects and %d post-processing effects found.'):format(effectCount, postEffectCount), 5)
+				applyFpsCap()
+
+				-- FPS counter
 				FPSBoost:Clean(runService.RenderStepped:Connect(function(deltaTime)
 					frames += 1
 					worstFrameMs = math.max(worstFrameMs, deltaTime * 1000)
@@ -13016,152 +12970,109 @@ run(function()
 						frames, sampleStart = 0, os.clock()
 					end
 				end))
-				FPSBoost:Clean(workspace.DescendantAdded:Connect(function(object)
-					if Particles.Enabled and effectClasses[object.ClassName] then
-						if disabledEffects[object] == nil then disabledEffects[object] = object.Enabled end
-						object.Enabled = false
+
+				-- Work through the queue a little each frame so nothing freezes.
+				FPSBoost:Clean(runService.Heartbeat:Connect(function()
+					if queueHead > queueTail then return end
+					local stop = math.min(queueHead + CHUNK - 1, queueTail)
+					for i = queueHead, stop do
+						local object = queue[i]
+						queue[i] = nil
+						if object and object.Parent then
+							processObject(object)
+						end
+					end
+					queueHead = stop + 1
+					if queueHead > queueTail then
+						queueHead, queueTail = 1, 0
 					end
 				end))
-				FPSBoost:Clean(workspace.DescendantAdded:Connect(function(object)
-					if not FlatMaterials.Enabled or not object:IsA('BasePart') then return end
-					for _, player in playersService:GetPlayers() do
-						if player.Character and object:IsDescendantOf(player.Character) then return end
-					end
-					if originalMaterials[object] == nil then
-						originalMaterials[object] = {material = object.Material, variant = object.MaterialVariant}
-						object.Material = Enum.Material.SmoothPlastic
-						object.MaterialVariant = ''
-					end
-				end))
-				FPSBoost:Clean(workspace.DescendantAdded:Connect(function(object)
-					if not WorldTextures.Enabled then return end
-					for _, player in playersService:GetPlayers() do
-						if player.Character and object:IsDescendantOf(player.Character) then return end
-					end
-					if object:IsA('MeshPart') and originalTextures[object] == nil then
-						originalTextures[object] = {kind = 'MeshPart', textureId = object.TextureID}
-						pcall(function() object.TextureID = '' end)
-					elseif (object:IsA('Decal') or object:IsA('Texture')) and originalTextures[object] == nil then
-						originalTextures[object] = {kind = 'Overlay', transparency = object.Transparency}
-						object.Transparency = 1
-					end
-				end))
-				FPSBoost:Clean(lightingService.ChildAdded:Connect(function(object)
-					if PostProcessing.Enabled and object:IsA('PostEffect') then
-						if disabledPostEffects[object] == nil then disabledPostEffects[object] = object.Enabled end
-						object.Enabled = false
-					end
-				end))
-				FPSBoost:Clean(workspace.DescendantAdded:Connect(function(object)
-					if MeshDetail.Enabled and object:IsA('MeshPart') then
-						if originalMeshFidelity[object] == nil then originalMeshFidelity[object] = object.RenderFidelity end
-						pcall(function() object.RenderFidelity = Enum.RenderFidelity.Performance end)
-					end
-				end))
-				applyRenderOptions()
+
+				FPSBoost:Clean(workspace.DescendantAdded:Connect(queueObject))
+				FPSBoost:Clean(lightingService.ChildAdded:Connect(processLighting))
+
+				applyGlobal()
+				rescan()
+
 				if Kill.Enabled then
 					for i, v in bedwars.KillEffectController.killEffects do
 						if not i:find('Custom') then
 							effects[i] = v
 							bedwars.KillEffectController.killEffects[i] = {
-								new = function() 
+								new = function()
 									return {
-										onKill = function() end, 
-										isPlayDefaultKillEffect = function() 
-											return true 
+										onKill = function() end,
+										isPlayDefaultKillEffect = function()
+											return true
 										end
-									} 
+									}
 								end
 							}
 						end
 					end
 				end
-	
+
 				if Visualizer.Enabled then
 					for i, v in bedwars.VisualizerUtils do
 						util[i] = v
 						bedwars.VisualizerUtils[i] = function() end
 					end
 				end
-	
-				repeat task.wait() until store.matchState ~= 0
-				if not bedwars.AppController then return end
-				bedwars.NametagController.addGameNametag = function() end
-				for _, v in bedwars.AppController:getOpenApps() do
-					if tostring(v):find('Nametag') then
-						bedwars.AppController:closeApp(tostring(v))
+
+				if Nametags.Enabled then
+					repeat task.wait() until store.matchState ~= 0 or not FPSBoost.Enabled
+					if not FPSBoost.Enabled or not bedwars.AppController then return end
+					if oldAddNametag == nil then
+						oldAddNametag = bedwars.NametagController.addGameNametag
+					end
+					bedwars.NametagController.addGameNametag = function() end
+					for _, v in bedwars.AppController:getOpenApps() do
+						if tostring(v):find('Nametag') then
+							bedwars.AppController:closeApp(tostring(v))
+						end
 					end
 				end
 			else
-				setParticles(false)
-				setPostProcessing(false)
-				if originalGlobalShadows ~= nil then
-					lightingService.GlobalShadows = originalGlobalShadows
-					originalGlobalShadows = nil
+				table.clear(queue)
+				queueHead, queueTail = 1, 0
+				reapplyPending = false
+				restoreAll()
+				applyFpsCap()
+				for i, v in effects do
+					bedwars.KillEffectController.killEffects[i] = v
 				end
-				if originalTerrainDecoration ~= nil then
-					workspace.Terrain.Decoration = originalTerrainDecoration
-					originalTerrainDecoration = nil
-				end
-				if originalQualityLevel ~= nil then
-					pcall(function() settings().Rendering.QualityLevel = originalQualityLevel end)
-					originalQualityLevel = nil
-				end
-				for object, fidelity in originalMeshFidelity do
-					if object.Parent then pcall(function() object.RenderFidelity = fidelity end) end
-				end
-				table.clear(originalMeshFidelity)
-				for object, state in originalTextures do
-					if object.Parent then
-						if state.kind == 'MeshPart' then pcall(function() object.TextureID = state.textureId end) else object.Transparency = state.transparency end
-					end
-				end
-				table.clear(originalTextures)
-				for object, state in originalMaterials do
-					if object.Parent then
-						object.Material = state.material
-						object.MaterialVariant = state.variant
-					end
-				end
-				table.clear(originalMaterials)
-				for object, value in originalAccessories do if object.Parent then object.LocalTransparencyModifier = value end end
-				for object, value in originalNametags do if object.Parent then object.Enabled = value end end
-				for object, value in originalLights do if object.Parent then object.Enabled = value end end
-				for object, value in originalClouds do if object.Parent then object.Enabled = value end end
-				table.clear(originalAccessories)
-				table.clear(originalNametags)
-				table.clear(originalLights)
-				table.clear(originalClouds)
-				if originalWater then
-					workspace.Terrain.WaterWaveSize, workspace.Terrain.WaterWaveSpeed, workspace.Terrain.WaterReflectance = unpack(originalWater)
-					originalWater = nil
-				end
-				if originalSpecular ~= nil then
-					lightingService.EnvironmentSpecularScale = originalSpecular
-					originalSpecular = nil
-				end
-				if originalTechnology ~= nil then
-					pcall(function() lightingService.Technology = originalTechnology end)
-					originalTechnology = nil
-				end
-				for object, visible in originalExplosions do if object.Parent then object.Visible = visible end end
-				for track, speed in originalAnimationSpeeds do pcall(function() track:AdjustSpeed(speed) end) end
-				table.clear(originalExplosions)
-				table.clear(originalAnimationSpeeds)
-				for i, v in effects do 
-					bedwars.KillEffectController.killEffects[i] = v 
-				end
-				for i, v in util do 
-					bedwars.VisualizerUtils[i] = v 
+				for i, v in util do
+					bedwars.VisualizerUtils[i] = v
 				end
 				table.clear(effects)
 				table.clear(util)
+				if oldAddNametag ~= nil then
+					bedwars.NametagController.addGameNametag = oldAddNametag
+					oldAddNametag = nil
+				end
 			end
 		end,
 		ExtraText = function()
 			return measuredFPS > 0 and (measuredFPS .. ' FPS | peak ' .. math.floor(peakFrameMs) .. 'ms') or 'scanning'
 		end,
-		Tooltip = 'Local, reversible rendering options. Your hardware and the game determine the actual FPS.'
+		Tooltip = 'Lifts the FPS cap and lowers local graphics. Real FPS depends on your PC.'
+	})
+	UnlockFPS = FPSBoost:CreateToggle({
+		Name = 'Unlock FPS',
+		Function = function()
+			if FPSBoost.Enabled then applyFpsCap() end
+		end,
+		Default = true,
+		Tooltip = 'Lifts the Roblox FPS cap with setfpscap. This is what actually raises FPS past 60.'
+	})
+	FPSCap = FPSBoost:CreateSlider({
+		Name = 'FPS Cap',
+		Min = 60,
+		Max = 1000,
+		Default = 1000,
+		Function = function()
+			if FPSBoost.Enabled then applyFpsCap() end
+		end
 	})
 	Kill = FPSBoost:CreateToggle({
 		Name = 'Kill Effects',
@@ -13183,51 +13094,31 @@ run(function()
 		end,
 		Default = true
 	})
-	Particles = FPSBoost:CreateToggle({
-		Name = 'Disable particles and trails',
-		Function = applyRenderOptions,
-		Default = true,
-		Tooltip = 'Disables local particles, trails, beams, fire, smoke, and sparkles.'
+	Particles = FPSBoost:CreateToggle({Name = 'Disable particles and trails', Function = reapply, Default = true, Tooltip = 'Turns off particles, trails, beams, fire, smoke and sparkles.'})
+	PostProcessing = FPSBoost:CreateToggle({Name = 'Disable post-processing', Function = reapply, Default = true, Tooltip = 'Turns off bloom, blur, sun rays and color effects.'})
+	Shadows = FPSBoost:CreateToggle({Name = 'Reduce shadows', Function = reapply, Default = true, Tooltip = 'Turns off global shadows and map part shadows.'})
+	MeshDetail = FPSBoost:CreateToggle({Name = 'Render quality', Function = reapply, Default = true, Tooltip = 'Lowest render quality, no grass, low-detail meshes.'})
+	WorldTextures = FPSBoost:CreateToggle({Name = 'Cosmetics', Function = reapply, Default = true, Tooltip = 'Removes map textures and decals. Players stay the same.'})
+	FlatMaterials = FPSBoost:CreateToggle({Name = 'Flat map materials', Function = reapply, Default = true, Tooltip = 'Makes map parts plain SmoothPlastic. Players stay the same.'})
+	Accessories = FPSBoost:CreateToggle({Name = 'Accessories', Function = reapply, Default = true, Tooltip = 'Hides other players\' accessories.'})
+	Clouds = FPSBoost:CreateToggle({Name = 'Clouds', Function = reapply, Default = true, Tooltip = 'Turns off clouds.'})
+	Lights = FPSBoost:CreateToggle({Name = 'Lights', Function = reapply, Default = true, Tooltip = 'Turns off point, spot and surface lights.'})
+	Water = FPSBoost:CreateToggle({Name = 'Water', Function = reapply, Default = true, Tooltip = 'Removes water waves and reflections.'})
+	Reflections = FPSBoost:CreateToggle({Name = 'Reflections', Function = reapply, Default = true, Tooltip = 'Turns off shiny reflections.'})
+	Explosions = FPSBoost:CreateToggle({Name = 'Explosions', Function = reapply, Default = true, Tooltip = 'Hides explosion visuals.'})
+	CompatibilityLighting = FPSBoost:CreateToggle({Name = 'Compatibility lighting', Function = reapply, Default = true, Tooltip = 'Uses the cheapest Roblox lighting.'})
+	Nametags = FPSBoost:CreateToggle({
+		Name = 'Nametags',
+		Function = function()
+			if FPSBoost.Enabled then
+				FPSBoost:Toggle()
+				FPSBoost:Toggle()
+			end
+		end,
+		Default = false,
+		Tooltip = 'Hides other players\' nametags. Off by default because it looks weird.'
 	})
-	PostProcessing = FPSBoost:CreateToggle({
-		Name = 'Disable post-processing',
-		Function = applyRenderOptions,
-		Default = true,
-		Tooltip = 'Disables bloom, depth of field, sun rays, and color effects without changing the sky.'
-	})
-	Shadows = FPSBoost:CreateToggle({
-		Name = 'Reduce shadows',
-		Function = applyRenderOptions,
-		Default = true,
-		Tooltip = 'Turns off local dynamic shadows.'
-	})
-	MeshDetail = FPSBoost:CreateToggle({
-		Name = 'Render quality',
-		Function = applyRenderOptions,
-		Default = true,
-		Tooltip = 'Uses lower-detail local terrain decoration and mesh geometry while preserving colours, avatars, and the sky.'
-	})
-	WorldTextures = FPSBoost:CreateToggle({
-		Name = 'Cosmetics',
-		Function = applyRenderOptions,
-		Default = true,
-		Tooltip = 'Strongest visual option: removes map MeshPart textures and decals locally, but leaves player avatars unchanged.'
-	})
-	FlatMaterials = FPSBoost:CreateToggle({
-		Name = 'Flat map materials',
-		Function = applyRenderOptions,
-		Default = true,
-		Tooltip = 'Aggressive: changes map parts to plain SmoothPlastic locally, removing material texture detail while keeping player characters unchanged.'
-	})
-	Accessories = FPSBoost:CreateToggle({Name = 'Accessories', Function = applyRenderOptions, Default = true, Tooltip = 'Hides other players\' accessory parts locally.'})
-	FreezeAnimations = FPSBoost:CreateToggle({Name = 'Freeze animations', Function = applyRenderOptions, Default = true, Tooltip = 'Pauses other players\' currently playing animations locally.'})
-	Clouds = FPSBoost:CreateToggle({Name = 'Clouds', Function = applyRenderOptions, Default = true, Tooltip = 'Disables local Cloud instances.'})
-	Lights = FPSBoost:CreateToggle({Name = 'Lights', Function = applyRenderOptions, Default = true, Tooltip = 'Disables local point, spot, and surface lights.'})
-	Water = FPSBoost:CreateToggle({Name = 'Water', Function = applyRenderOptions, Default = true, Tooltip = 'Removes local water waves and reflections.'})
-	Reflections = FPSBoost:CreateToggle({Name = 'Reflections', Function = applyRenderOptions, Default = true, Tooltip = 'Disables local environment specular reflections.'})
-	Nametags = FPSBoost:CreateToggle({Name = 'Nametags', Function = applyRenderOptions, Default = true, Tooltip = 'Hides other players\' BillboardGui nametags locally.'})
-	Explosions = FPSBoost:CreateToggle({Name = 'Explosions', Function = applyRenderOptions, Default = true, Tooltip = 'Hides local Explosion visuals.'})
-	CompatibilityLighting = FPSBoost:CreateToggle({Name = 'Compatibility lighting', Function = applyRenderOptions, Default = true, Tooltip = 'Uses Roblox compatibility lighting locally.'})
+	FreezeAnimations = FPSBoost:CreateToggle({Name = 'Freeze animations', Function = reapply, Default = false, Tooltip = 'Freezes other players\' animations. Off by default: barely helps FPS and looks weird.'})
 end)
 	
 run(function()
