@@ -288,6 +288,17 @@ local function getShieldAttribute(char)
 	return returned
 end
 
+local function checkFaceAdjacent(pos, faces)
+    faces = faces or {
+        Vector3.new(3,0,0), Vector3.new(-3,0,0), Vector3.new(0,3,0),
+        Vector3.new(0,-3,0), Vector3.new(0,0,3), Vector3.new(0,0,-3)
+    }
+    for _, v in ipairs(faces) do
+        if getPlacedBlock(pos + v) then return true end
+    end
+    return false
+end
+
 local function getSpeed()
 	local multi, increase, modifiers = 0, true, bedwars.SprintController:getMovementStatusModifier():getModifiers()
 
@@ -376,6 +387,48 @@ local function removeTags(str)
 	return (str:gsub('<[^<>]->', ''))
 end
 
+local function getScaffoldBlockForModule(limitItem)
+	if limitItem.Enabled then
+		if store.hand.toolType == 'block' then
+			return store.hand.tool.Name
+		end
+		return nil
+	else
+		local wool = getWool()
+		if wool then
+			return wool
+		else
+			for _, item in store.inventory.inventory.items do
+				if bedwars.ItemMeta[item.itemType].block then
+					return item.itemType
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function getScaffoldBlockForModule(limitItem)
+	if limitItem.Enabled then
+		if store.hand.toolType == 'block' then
+			return store.hand.tool.Name
+		end
+		return nil
+	else
+		local wool = getWool()
+		if wool then
+			return wool
+		else
+			for _, item in store.inventory.inventory.items do
+				if bedwars.ItemMeta[item.itemType].block then
+					return item.itemType
+				end
+			end
+		end
+	end
+	return nil
+end
+
 local function roundPos(vec)
 	return Vector3.new(math.round(vec.X / 3) * 3, math.round(vec.Y / 3) * 3, math.round(vec.Z / 3) * 3)
 end
@@ -418,13 +471,7 @@ local function modifyVelocity(v)
 	end
 end
 
-local function getScaffoldBlockForModule(limitItem)
-	if limitItem.Enabled then
-		if store.hand.toolType == 'block' then
-			return store.hand.tool.Name
-		end
-		return nil
-	else
+
 		local wool = getWool()
 		if wool then
 			return wool
