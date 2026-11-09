@@ -5894,6 +5894,9 @@ run(function()
 						end
 
 						local targetPart = plr[TargetPart.Value]
+						if projmeta.projectile:find('arrow', 1, true) and plr.Character then
+							targetPart = plr.Character:FindFirstChild('UpperTorso') or plr.Character:FindFirstChild('Torso') or targetPart
+						end
 						local meta = projmeta:getProjectileMeta()
 						if not targetPart or not meta then
 							return old(...)
@@ -5912,6 +5915,13 @@ run(function()
 						local baseSpeed = (overrides and overrides.launchVelocityOverride) or meta.launchVelocity or 100
 						local projSpeed = baseSpeed * (projmeta.velocityMultiplier or 1)
 						local offsetpos = pos + (projmeta.projectile == 'owl_projectile' and Vector3.zero or projmeta.fromPositionOffset)
+						if projmeta.projectile:find('arrow', 1, true) then
+							local bow = bedwars.BowConstantsTable or {}
+							local aimDirection = (targetPart.Position - offsetpos)
+							if aimDirection.Magnitude > 0.01 then
+								offsetpos = (CFrame.lookAlong(offsetpos, aimDirection.Unit) * CFrame.new(-(bow.RelX or 0), -(bow.RelY or 0), -(bow.RelZ or 0))).Position
+							end
+						end
 						local balloons = plr.Character:GetAttribute('InflatedBalloons')
 						local playerGravity = workspace.Gravity
 
