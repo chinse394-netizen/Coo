@@ -5814,7 +5814,7 @@ run(function()
 				refreshRayFilter()
 				shotStats.hits = 0
 				shotStats.total = 0
-				ProjectileAimbot:Clean(runService.RenderStepped:Connect(function(dt)t
+				ProjectileAimbot:Clean(runService.RenderStepped:Connect(function(dt)
 					frameTime = frameTime + (math.min(dt, 0.25) - frameTime) * 0.1
 				end))
 
