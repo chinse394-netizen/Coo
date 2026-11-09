@@ -12759,12 +12759,13 @@ run(function()
 	local effects, util = {}, {}
 	local oldAddNametag
 	local oldFpsCap
-	local saved = setmetatable({}, {__mode = 'k'})
+	local saved = {}
 	local savedTracks = setmetatable({}, {__mode = 'k'})
 	local queue, queueHead, queueTail = {}, 1, 0
 	local reapplyPending = false
 	local measuredFPS, worstFrameMs, peakFrameMs, frames, sampleStart = 0, 0, 0, 0, os.clock()
 	local CHUNK = 300
+	local extraText = 'scanning'
 	local effectClasses = {
 		ParticleEmitter = true,
 		Trail = true,
@@ -12774,25 +12775,28 @@ run(function()
 		Sparkles = true
 	}
 
-	-- Save the old value once, then set the new one.
+	-- Saved values live in one table per property (saved[prop][object] = old).
+	-- The old way made a new table for every block, which built up memory and
+	-- caused the garbage collector to drop FPS. No closures here either.
+	local function getProp(object, prop) return object[prop] end
+	local function setProp(object, prop, value) object[prop] = value end
+
 	local function set(object, prop, value)
-		local entry = saved[object]
-		if not entry then
-			entry = {}
-			saved[object] = entry
+		local ok, old = pcall(getProp, object, prop)
+		if not ok or old == nil or old == value then return end -- already fine: nothing to save
+		local propTable = saved[prop]
+		if not propTable then
+			propTable = setmetatable({}, {__mode = 'k'})
+			saved[prop] = propTable
 		end
-		if entry[prop] == nil then
-			local ok, old = pcall(function() return object[prop] end)
-			if not ok or old == nil then return end
-			entry[prop] = old
-		end
-		pcall(function() object[prop] = value end)
+		if propTable[object] == nil then propTable[object] = old end
+		pcall(setProp, object, prop, value)
 	end
 
 	local function restoreAll()
-		for object, entry in saved do
-			for prop, value in entry do
-				pcall(function() object[prop] = value end)
+		for prop, propTable in saved do
+			for object, value in propTable do
+				pcall(setProp, object, prop, value)
 			end
 		end
 		table.clear(saved)
@@ -12867,7 +12871,8 @@ run(function()
 				end
 				return
 			end
-			if Shadows.Enabled then set(object, 'CastShadow', false) end
+			-- (No per-part CastShadow: GlobalShadows off already kills shadows, and
+			-- saving it for every block was the main cause of the FPS drops.)
 			if Reflections.Enabled then set(object, 'Reflectance', 0) end
 			-- Smooth only plain parts. Parts with a MaterialVariant (BedWars blocks) get
 			-- their color from it, so changing them would turn them white.
@@ -12954,6 +12959,8 @@ run(function()
 	end
 
 	local function queueObject(object)
+		-- Drop anything we never change before it even hits the queue.
+		if not relevantClasses[object.ClassName] then return end
 		queueTail += 1
 		queue[queueTail] = object
 	end
@@ -13016,6 +13023,8 @@ run(function()
 					if elapsed >= 1 then
 						measuredFPS = math.floor(frames / elapsed)
 						peakFrameMs = worstFrameMs
+						-- Build the label once a second, not every frame (less garbage).
+						extraText = measuredFPS .. ' FPS | peak ' .. math.floor(peakFrameMs) .. 'ms'
 						worstFrameMs = 0
 						frames, sampleStart = 0, os.clock()
 					end
@@ -13103,7 +13112,7 @@ run(function()
 			end
 		end,
 		ExtraText = function()
-			return measuredFPS > 0 and (measuredFPS .. ' FPS | peak ' .. math.floor(peakFrameMs) .. 'ms') or 'scanning'
+			return extraText
 		end,
 		Tooltip = 'Lifts the FPS cap and lowers local graphics. Real FPS depends on your PC.'
 	})
