@@ -5720,6 +5720,7 @@ run(function()
 		end
 		local offsets = {
 			primary,
+			Vector3.new(0, 0.7, 0),
 			Vector3.new(0, 1.5, 0),
 			side,
 			-side,
@@ -5885,6 +5886,17 @@ run(function()
 						end
 						local scale = VelocityPrediction.Value / 100
 						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
+		local profileSamples = plr.Player and profiles[plr.Player] and profiles[plr.Player].samples
+		if profileSamples and #profileSamples >= 3 then
+			local newest = profileSamples[#profileSamples]
+			local previous = profileSamples[#profileSamples - 1]
+			local older = profileSamples[#profileSamples - 2]
+			local dtNew = math.max(newest.t - previous.t, 0.01)
+			local dtOld = math.max(previous.t - older.t, 0.01)
+			local acceleration = ((newest.v - previous.v) / dtNew + (previous.v - older.v) / dtOld) * 0.5
+			acceleration = Vector3.new(math.clamp(acceleration.X, -120, 120), math.clamp(acceleration.Y, -80, 80), math.clamp(acceleration.Z, -120, 120))
+			velocity += acceleration * math.clamp(getLeadTime(), 0, 0.25)
+		end
 						if isTelepearl then
 							velocity = Vector3.zero
 						end
