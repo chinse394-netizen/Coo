@@ -12764,7 +12764,7 @@ run(function()
 	local queue, queueHead, queueTail = {}, 1, 0
 	local reapplyPending = false
 	local measuredFPS, worstFrameMs, peakFrameMs, frames, sampleStart = 0, 0, 0, 0, os.clock()
-	local CHUNK = 600
+	local CHUNK = 300
 	local effectClasses = {
 		ParticleEmitter = true,
 		Trail = true,
@@ -12815,8 +12815,18 @@ run(function()
 		return false, false
 	end
 
+	-- Only these classes matter. Everything else is skipped right away (cheap).
+	local relevantClasses = {
+		ParticleEmitter = true, Trail = true, Beam = true, Fire = true, Smoke = true, Sparkles = true,
+		Explosion = true, Clouds = true, PointLight = true, SpotLight = true, SurfaceLight = true,
+		Highlight = true, SurfaceAppearance = true, Part = true, MeshPart = true, UnionOperation = true,
+		WedgePart = true, CornerWedgePart = true, TrussPart = true, Decal = true, Texture = true,
+		BillboardGui = true, Humanoid = true
+	}
+
 	local function processObject(object)
 		local className = object.ClassName
+		if not relevantClasses[className] then return end
 		if effectClasses[className] then
 			if Particles.Enabled then set(object, 'Enabled', false) end
 			return
@@ -12859,9 +12869,11 @@ run(function()
 			end
 			if Shadows.Enabled then set(object, 'CastShadow', false) end
 			if Reflections.Enabled then set(object, 'Reflectance', 0) end
-			if FlatMaterials.Enabled then
+			-- Smooth only plain parts. Parts with a MaterialVariant (BedWars blocks) get
+			-- their color from it, so changing them would turn them white.
+			if FlatMaterials.Enabled and object.MaterialVariant == '' and object.Material ~= Enum.Material.SmoothPlastic
+				and object.Material ~= Enum.Material.Neon and object.Material ~= Enum.Material.Glass and object.Material ~= Enum.Material.ForceField then
 				set(object, 'Material', Enum.Material.SmoothPlastic)
-				set(object, 'MaterialVariant', '')
 			end
 			if className == 'MeshPart' then
 				if WorldTextures.Enabled then set(object, 'TextureID', '') end
@@ -12887,8 +12899,10 @@ run(function()
 		end
 	end
 
+	-- ColorCorrection is almost free and keeps the game's colors right, so leave it on.
+	local heavyPostEffects = {BloomEffect = true, BlurEffect = true, SunRaysEffect = true, DepthOfFieldEffect = true}
 	local function processLighting(object)
-		if PostProcessing.Enabled and object:IsA('PostEffect') then
+		if PostProcessing.Enabled and heavyPostEffects[object.ClassName] then
 			set(object, 'Enabled', false)
 		end
 	end
@@ -12912,16 +12926,12 @@ run(function()
 			if ok and rendering then
 				set(rendering, 'QualityLevel', Enum.QualityLevel.Level01)
 			end
-			-- Older, lighter material textures (keeps the map's look, just lower detail).
-			local okService, materialService = pcall(function() return game:GetService('MaterialService') end)
-			if okService and materialService then
-				set(materialService, 'Use2022Materials', false)
-			end
+			-- NOTE: do NOT touch MaterialService.Use2022Materials. BedWars blocks get
+			-- their color from MaterialVariants, and turning it off makes the map white.
 		end
 		if Atmosphere.Enabled then
 			for _, object in lightingService:GetChildren() do
 				if object.ClassName == 'Atmosphere' then
-					set(object, 'Density', 0)
 					set(object, 'Haze', 0)
 					set(object, 'Glare', 0)
 				end
@@ -12963,7 +12973,13 @@ run(function()
 				local ok, cap = pcall(function() return getfpscap and getfpscap() end)
 				oldFpsCap = (ok and cap) or 60
 			end
-			pcall(setfpscap, FPSCap.Value)
+			local cap = FPSCap.Value
+			-- Phones and iPads can't show more than 120 FPS. Uncapping past that only
+			-- heats the device up, and then it slows down (less FPS, not more).
+			if inputService.TouchEnabled and not inputService.KeyboardEnabled then
+				cap = math.min(cap, 120)
+			end
+			pcall(setfpscap, cap)
 		elseif oldFpsCap ~= nil then
 			pcall(setfpscap, oldFpsCap)
 			oldFpsCap = nil
@@ -13136,14 +13152,14 @@ run(function()
 	Highlights = FPSBoost:CreateToggle({Name = 'Highlights', Function = reapply, Default = true, Tooltip = 'Turns off Highlight glows (very heavy to draw).'})
 	Atmosphere = FPSBoost:CreateToggle({Name = 'Atmosphere', Function = reapply, Default = true, Tooltip = 'Removes fog haze and glare.'})
 	WorldTextures = FPSBoost:CreateToggle({Name = 'Remove textures', Function = reapply, Default = false, Tooltip = 'Max FPS: removes map textures and decals. Makes the map look plain.'})
-	FlatMaterials = FPSBoost:CreateToggle({Name = 'Flat map materials', Function = reapply, Default = false, Tooltip = 'Max FPS: makes map parts plain plastic. Makes the map look white.'})
+	FlatMaterials = FPSBoost:CreateToggle({Name = 'Smooth materials', Function = reapply, Default = true, Tooltip = 'Makes plain map parts smooth. Keeps their color. Blocks are not touched.'})
 	Accessories = FPSBoost:CreateToggle({Name = 'Accessories', Function = reapply, Default = true, Tooltip = 'Hides other players\' accessories.'})
 	Clouds = FPSBoost:CreateToggle({Name = 'Clouds', Function = reapply, Default = true, Tooltip = 'Turns off clouds.'})
 	Lights = FPSBoost:CreateToggle({Name = 'Lights', Function = reapply, Default = true, Tooltip = 'Turns off point, spot and surface lights.'})
 	Water = FPSBoost:CreateToggle({Name = 'Water', Function = reapply, Default = true, Tooltip = 'Removes water waves and reflections.'})
 	Reflections = FPSBoost:CreateToggle({Name = 'Reflections', Function = reapply, Default = true, Tooltip = 'Turns off shiny reflections.'})
 	Explosions = FPSBoost:CreateToggle({Name = 'Explosions', Function = reapply, Default = true, Tooltip = 'Hides explosion visuals.'})
-	CompatibilityLighting = FPSBoost:CreateToggle({Name = 'Compatibility lighting', Function = reapply, Default = true, Tooltip = 'Uses the cheapest Roblox lighting.'})
+	CompatibilityLighting = FPSBoost:CreateToggle({Name = 'Simple lighting', Function = reapply, Default = false, Tooltip = 'Cheapest Roblox lighting. Off by default: can make the map look too bright and washed out.'})
 	Nametags = FPSBoost:CreateToggle({
 		Name = 'Nametags',
 		Function = function()
