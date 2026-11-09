@@ -5983,7 +5983,7 @@ run(function()
 								end
 							end
 
-							if path and not projmeta.projectile:find('arrow', 1, true) then
+							if path and (not projmeta.projectile:find('arrow', 1, true)) then
 								local volatile = profile ~= nil and (profile.air or ratio < 0.8 or getHopPattern(profile, now) ~= nil or getStrafePattern(profile, now) ~= nil)
 								local maxTime = math.min(lifetime, (SIM_STEPS * SIM_STEP) - lead)
 								local function getPos(t)
