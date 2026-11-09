@@ -12756,6 +12756,12 @@ run(function()
 	local Particles, PostProcessing, Shadows, MeshDetail, WorldTextures, FlatMaterials
 	local Accessories, FreezeAnimations, Clouds, Lights, Water, Reflections, Nametags, Explosions, CompatibilityLighting
 	local LowTextures, Highlights, Atmosphere
+	local RenderDistance, Distance
+	-- Render distance: positions are stored once in plain Lua arrays so the
+	-- distance check is pure math (very cheap). Roblox properties are only
+	-- written when a part flips between near and far.
+	local distParts, distPos, distHidden, distCount, distIndex = {}, {}, {}, 0, 1
+	local DIST_CHUNK = 2500
 	local effects, util = {}, {}
 	local oldAddNametag
 	local oldFpsCap
@@ -12874,6 +12880,11 @@ run(function()
 			-- (No per-part CastShadow: GlobalShadows off already kills shadows, and
 			-- saving it for every block was the main cause of the FPS drops.)
 			if Reflections.Enabled then set(object, 'Reflectance', 0) end
+			if RenderDistance.Enabled and object.Anchored then
+				distCount += 1
+				distParts[distCount] = object
+				distPos[distCount] = object.Position
+			end
 			-- Smooth only plain parts. Parts with a MaterialVariant (BedWars blocks) get
 			-- their color from it, so changing them would turn them white.
 			if FlatMaterials.Enabled and object.MaterialVariant == '' and object.Material ~= Enum.Material.SmoothPlastic
@@ -12965,9 +12976,64 @@ run(function()
 		queue[queueTail] = object
 	end
 
+	local function clearDistance()
+		table.clear(distParts)
+		table.clear(distPos)
+		table.clear(distHidden)
+		distCount, distIndex = 0, 1
+	end
+
+	local function getSaved(object, prop, fallback)
+		local propTable = saved[prop]
+		local value = propTable and propTable[object]
+		if value == nil then return fallback end
+		return value
+	end
+
+	local function setHidden(part, hidden)
+		if hidden then
+			set(part, 'LocalTransparencyModifier', 1)
+		else
+			pcall(setProp, part, 'LocalTransparencyModifier', getSaved(part, 'LocalTransparencyModifier', 0))
+		end
+		-- Textures/decals on the part would float in the air otherwise.
+		for _, child in part:GetChildren() do
+			local className = child.ClassName
+			if className == 'Texture' or className == 'Decal' then
+				if hidden then
+					set(child, 'LocalTransparencyModifier', 1)
+				else
+					pcall(setProp, child, 'LocalTransparencyModifier', getSaved(child, 'LocalTransparencyModifier', 0))
+				end
+			end
+		end
+	end
+
+	local function updateDistance()
+		if not RenderDistance.Enabled or distCount == 0 then return end
+		local camera = workspace.CurrentCamera
+		if not camera then return end
+		local origin = camera.CFrame.Position
+		local maxDistance = Distance.Value
+		for _ = 1, math.min(DIST_CHUNK, distCount) do
+			if distIndex > distCount then distIndex = 1 end
+			local i = distIndex
+			distIndex += 1
+			local far = (distPos[i] - origin).Magnitude > maxDistance
+			if far ~= (distHidden[i] == true) then
+				local part = distParts[i]
+				if part.Parent then
+					distHidden[i] = far or nil
+					setHidden(part, far)
+				end
+			end
+		end
+	end
+
 	local function rescan()
 		table.clear(queue)
 		queueHead, queueTail = 1, 0
+		clearDistance()
 		for _, object in workspace:GetDescendants() do
 			queueObject(object)
 		end
@@ -13032,6 +13098,7 @@ run(function()
 
 				-- Work through the queue a little each frame so nothing freezes.
 				FPSBoost:Clean(runService.Heartbeat:Connect(function()
+					updateDistance()
 					if queueHead > queueTail then return end
 					local stop = math.min(queueHead + CHUNK - 1, queueTail)
 					for i = queueHead, stop do
@@ -13095,6 +13162,7 @@ run(function()
 				table.clear(queue)
 				queueHead, queueTail = 1, 0
 				reapplyPending = false
+				clearDistance()
 				restoreAll()
 				applyFpsCap()
 				for i, v in effects do
@@ -13157,6 +13225,8 @@ run(function()
 	PostProcessing = FPSBoost:CreateToggle({Name = 'Disable post-processing', Function = reapply, Default = true, Tooltip = 'Turns off bloom, blur, sun rays and color effects.'})
 	Shadows = FPSBoost:CreateToggle({Name = 'Reduce shadows', Function = reapply, Default = true, Tooltip = 'Turns off global shadows and map part shadows.'})
 	MeshDetail = FPSBoost:CreateToggle({Name = 'Render quality', Function = reapply, Default = true, Tooltip = 'Lowest render quality, no grass, low-detail meshes.'})
+	RenderDistance = FPSBoost:CreateToggle({Name = 'Render distance', Function = reapply, Default = true, Tooltip = 'Hides map parts that are far from your camera. Biggest FPS boost. Players are never hidden.'})
+	Distance = FPSBoost:CreateSlider({Name = 'Distance', Min = 100, Max = 1500, Default = 350, Tooltip = 'How far you can see map parts (studs). Lower = more FPS.'})
 	LowTextures = FPSBoost:CreateToggle({Name = 'Low-res textures', Function = reapply, Default = true, Tooltip = 'Keeps textures but makes them lower quality. Map still looks normal.'})
 	Highlights = FPSBoost:CreateToggle({Name = 'Highlights', Function = reapply, Default = true, Tooltip = 'Turns off Highlight glows (very heavy to draw).'})
 	Atmosphere = FPSBoost:CreateToggle({Name = 'Atmosphere', Function = reapply, Default = true, Tooltip = 'Removes fog haze and glare.'})
