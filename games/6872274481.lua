@@ -13009,8 +13009,15 @@ run(function()
 		end
 	end
 
-	local function updateDistance()
+	-- Only check distances 20 times a second, not every frame. At 500 FPS the
+	-- old way did 25x more work than needed. Camera moves slowly vs. the distance.
+	local lastDistanceCheck = 0
+	local DIST_INTERVAL = 0.05
+
+	local function updateDistance(now)
 		if not RenderDistance.Enabled or distCount == 0 then return end
+		if now - lastDistanceCheck < DIST_INTERVAL then return end
+		lastDistanceCheck = now
 		local camera = workspace.CurrentCamera
 		if not camera then return end
 		local origin = camera.CFrame.Position
@@ -13081,24 +13088,22 @@ run(function()
 				end
 				applyFpsCap()
 
-				-- FPS counter
-				FPSBoost:Clean(runService.RenderStepped:Connect(function(deltaTime)
+				-- ONE per-frame connection does everything (FPS counter, distance, queue).
+				FPSBoost:Clean(runService.Heartbeat:Connect(function(deltaTime)
+					local now = os.clock()
 					frames += 1
-					worstFrameMs = math.max(worstFrameMs, deltaTime * 1000)
-					local elapsed = os.clock() - sampleStart
+					if deltaTime > worstFrameMs then worstFrameMs = deltaTime end
+					local elapsed = now - sampleStart
 					if elapsed >= 1 then
 						measuredFPS = math.floor(frames / elapsed)
-						peakFrameMs = worstFrameMs
+						peakFrameMs = worstFrameMs * 1000
 						-- Build the label once a second, not every frame (less garbage).
 						extraText = measuredFPS .. ' FPS | peak ' .. math.floor(peakFrameMs) .. 'ms'
 						worstFrameMs = 0
-						frames, sampleStart = 0, os.clock()
+						frames, sampleStart = 0, now
 					end
-				end))
 
-				-- Work through the queue a little each frame so nothing freezes.
-				FPSBoost:Clean(runService.Heartbeat:Connect(function()
-					updateDistance()
+					updateDistance(now)
 					if queueHead > queueTail then return end
 					local stop = math.min(queueHead + CHUNK - 1, queueTail)
 					for i = queueHead, stop do
