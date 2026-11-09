@@ -6828,6 +6828,14 @@ run(function()
 			and ent.RootPart and ent.RootPart.Parent
 			and (ent.Health == nil or ent.Health > 0)
 	end
+
+	local function getNametagWorldPosition(ent)
+		local head = ent and ent.Character and ent.Character:FindFirstChild('Head')
+		if head then
+			return head.Position + Vector3.new(0, 0.35, 0)
+		end
+		return ent.RootPart.Position + Vector3.new(0, ent.HipHeight + 1, 0)
+	end
 	
 	local Added = {
 		Normal = function(ent)
@@ -7058,7 +7066,7 @@ run(function()
 					end
 				end
 	
-				local headPos, headVis = gameCamera:WorldToViewportPoint(ent.RootPart.Position + Vector3.new(0, ent.HipHeight + 1, 0))
+				local headPos, headVis = gameCamera:WorldToViewportPoint(getNametagWorldPosition(ent))
 				nametag.Visible = headVis
 				if not headVis then
 					continue
@@ -7091,7 +7099,7 @@ run(function()
 					end
 				end
 	
-				local headPos, headVis = gameCamera:WorldToViewportPoint(ent.RootPart.Position + Vector3.new(0, ent.HipHeight + 1, 0))
+				local headPos, headVis = gameCamera:WorldToViewportPoint(getNametagWorldPosition(ent))
 				nametag.Text.Visible = headVis
 				nametag.BG.Visible = headVis
 				if not headVis then
