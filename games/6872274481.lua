@@ -12755,6 +12755,7 @@ run(function()
 	local UnlockFPS, FPSCap
 	local Particles, PostProcessing, Shadows, MeshDetail, WorldTextures, FlatMaterials
 	local Accessories, FreezeAnimations, Clouds, Lights, Water, Reflections, Nametags, Explosions, CompatibilityLighting
+	local LowTextures, Highlights, Atmosphere
 	local effects, util = {}, {}
 	local oldAddNametag
 	local oldFpsCap
@@ -12828,6 +12829,18 @@ run(function()
 		elseif object:IsA('Light') then
 			if Lights.Enabled then set(object, 'Enabled', false) end
 			return
+		elseif className == 'Highlight' then
+			-- Highlights are one of the most expensive things Roblox draws.
+			if Highlights.Enabled then set(object, 'Enabled', false) end
+			return
+		elseif className == 'SurfaceAppearance' then
+			-- Keeps the base color texture but drops the extra PBR detail maps.
+			if LowTextures.Enabled then
+				set(object, 'NormalMap', '')
+				set(object, 'RoughnessMap', '')
+				set(object, 'MetalnessMap', '')
+			end
+			return
 		end
 
 		local isBasePart = object:IsA('BasePart')
@@ -12845,10 +12858,10 @@ run(function()
 				return
 			end
 			if Shadows.Enabled then set(object, 'CastShadow', false) end
+			if Reflections.Enabled then set(object, 'Reflectance', 0) end
 			if FlatMaterials.Enabled then
 				set(object, 'Material', Enum.Material.SmoothPlastic)
 				set(object, 'MaterialVariant', '')
-				set(object, 'Reflectance', 0)
 			end
 			if className == 'MeshPart' then
 				if WorldTextures.Enabled then set(object, 'TextureID', '') end
@@ -12891,6 +12904,27 @@ run(function()
 			local ok, rendering = pcall(function() return settings().Rendering end)
 			if ok and rendering then
 				set(rendering, 'QualityLevel', Enum.QualityLevel.Level01)
+			end
+		end
+		if LowTextures.Enabled then
+			-- Lowest quality level also makes Roblox load lower-res textures.
+			local ok, rendering = pcall(function() return settings().Rendering end)
+			if ok and rendering then
+				set(rendering, 'QualityLevel', Enum.QualityLevel.Level01)
+			end
+			-- Older, lighter material textures (keeps the map's look, just lower detail).
+			local okService, materialService = pcall(function() return game:GetService('MaterialService') end)
+			if okService and materialService then
+				set(materialService, 'Use2022Materials', false)
+			end
+		end
+		if Atmosphere.Enabled then
+			for _, object in lightingService:GetChildren() do
+				if object.ClassName == 'Atmosphere' then
+					set(object, 'Density', 0)
+					set(object, 'Haze', 0)
+					set(object, 'Glare', 0)
+				end
 			end
 		end
 		if Water.Enabled then
@@ -13098,8 +13132,11 @@ run(function()
 	PostProcessing = FPSBoost:CreateToggle({Name = 'Disable post-processing', Function = reapply, Default = true, Tooltip = 'Turns off bloom, blur, sun rays and color effects.'})
 	Shadows = FPSBoost:CreateToggle({Name = 'Reduce shadows', Function = reapply, Default = true, Tooltip = 'Turns off global shadows and map part shadows.'})
 	MeshDetail = FPSBoost:CreateToggle({Name = 'Render quality', Function = reapply, Default = true, Tooltip = 'Lowest render quality, no grass, low-detail meshes.'})
-	WorldTextures = FPSBoost:CreateToggle({Name = 'Cosmetics', Function = reapply, Default = true, Tooltip = 'Removes map textures and decals. Players stay the same.'})
-	FlatMaterials = FPSBoost:CreateToggle({Name = 'Flat map materials', Function = reapply, Default = true, Tooltip = 'Makes map parts plain SmoothPlastic. Players stay the same.'})
+	LowTextures = FPSBoost:CreateToggle({Name = 'Low-res textures', Function = reapply, Default = true, Tooltip = 'Keeps textures but makes them lower quality. Map still looks normal.'})
+	Highlights = FPSBoost:CreateToggle({Name = 'Highlights', Function = reapply, Default = true, Tooltip = 'Turns off Highlight glows (very heavy to draw).'})
+	Atmosphere = FPSBoost:CreateToggle({Name = 'Atmosphere', Function = reapply, Default = true, Tooltip = 'Removes fog haze and glare.'})
+	WorldTextures = FPSBoost:CreateToggle({Name = 'Remove textures', Function = reapply, Default = false, Tooltip = 'Max FPS: removes map textures and decals. Makes the map look plain.'})
+	FlatMaterials = FPSBoost:CreateToggle({Name = 'Flat map materials', Function = reapply, Default = false, Tooltip = 'Max FPS: makes map parts plain plastic. Makes the map look white.'})
 	Accessories = FPSBoost:CreateToggle({Name = 'Accessories', Function = reapply, Default = true, Tooltip = 'Hides other players\' accessories.'})
 	Clouds = FPSBoost:CreateToggle({Name = 'Clouds', Function = reapply, Default = true, Tooltip = 'Turns off clouds.'})
 	Lights = FPSBoost:CreateToggle({Name = 'Lights', Function = reapply, Default = true, Tooltip = 'Turns off point, spot and surface lights.'})
