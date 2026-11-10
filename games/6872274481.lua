@@ -12848,7 +12848,7 @@ run(function()
 	local Kill, Visualizer
 	local UnlockFPS, FPSCap
 	local Particles, PostProcessing, Shadows, MeshDetail, WorldTextures, FlatMaterials
-	local Accessories, FreezeAnimations, Clouds, Lights, Water, Reflections, Nametags, Explosions, CompatibilityLighting
+	local Accessories, FreezeAnimations, Clouds, Lights, Water, Reflections, Nametags, Explosions, CompatibilityLighting, HitregBoost
 	local LowTextures, Highlights, Atmosphere
 	local RenderDistance, Distance
 	-- Render distance: positions are stored once in plain Lua arrays so the
@@ -13160,6 +13160,13 @@ run(function()
 		end
 	end
 
+	local function killauraRunning()
+		for _, module in vape.Modules do
+			if module.Name == 'KillauraV2' then return module.Enabled end
+		end
+		return false
+	end
+
 	-- Toggle changes: undo everything, then redo with the new settings (batched, once per frame max).
 	local function reapply()
 		if not FPSBoost or not FPSBoost.Enabled or reapplyPending then return end
@@ -13197,9 +13204,12 @@ run(function()
 						frames, sampleStart = 0, now
 					end
 
-					updateDistance(now)
+					if not (HitregBoost.Enabled and killauraRunning()) then
+						updateDistance(now)
+					end
 					if queueHead > queueTail then return end
-					local stop = math.min(queueHead + CHUNK - 1, queueTail)
+					local workChunk = HitregBoost.Enabled and killauraRunning() and math.max(50, math.floor(CHUNK / 4)) or CHUNK
+					local stop = math.min(queueHead + workChunk - 1, queueTail)
 					for i = queueHead, stop do
 						local object = queue[i]
 						queue[i] = nil
@@ -13299,6 +13309,11 @@ run(function()
 		Function = function()
 			if FPSBoost.Enabled then applyFpsCap() end
 		end
+	})
+	HitregBoost = FPSBoost:CreateToggle({
+		Name = 'Hitreg Boost',
+		Default = true,
+		Tooltip = 'Reduces FPS Booster scene work while KillauraV2 is active.'
 	})
 	Kill = FPSBoost:CreateToggle({
 		Name = 'Kill Effects',
