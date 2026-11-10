@@ -24555,6 +24555,23 @@ run(function()
 											})
 										end)
 									sent = sent and accepted ~= false
+									if not sent then
+										sent = pcall(function()
+											AttackRemote:FireServer({
+												weapon = sword.tool,
+												chargedAttack = {chargeRatio = 0},
+												entityInstance = v.Character,
+												validate = {
+													raycast = {
+														cameraPosition = {value = pos},
+														cursorDirection = {value = dir}
+													},
+													targetPosition = {value = actualRoot.Position},
+													selfPosition = {value = pos}
+													}
+											})
+										end)
+									end
 										if sent then
 											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
