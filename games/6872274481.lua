@@ -24565,6 +24565,23 @@ run(function()
 											})
 										end)
 										local sent = callOk and accepted ~= false
+										if not sent then
+											sent = pcall(function()
+												AttackRemote:FireServer({
+													weapon = sword.tool,
+													chargedAttack = {chargeRatio = 0},
+													entityInstance = v.Character,
+													validate = {
+														raycast = {
+															cameraPosition = {value = selfpos},
+															cursorDirection = {value = dir}
+														},
+														targetPosition = {value = actualRoot.Position},
+														selfPosition = {value = selfpos}
+													}
+												})
+											end)
+										end
 										if sent then
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
 											store.attackReachUpdate = tick() + 1
