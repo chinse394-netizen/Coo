@@ -5997,7 +5997,11 @@ run(function()
 						end
 
 						if not direction then
-							local leadPosition = targetPart.Position + velocity * lead
+							local targetPosition = targetPart.Position
+							if projmeta.projectile:find('arrow', 1, true) then
+								targetPosition += Vector3.new(0, math.clamp((plr.HipHeight or 2) * 0.3, 0.35, 0.9), 0)
+							end
+							local leadPosition = targetPosition + velocity * lead
 							local libraryAim = prediction.SolveTrajectory(offsetpos, projSpeed, gravity, leadPosition, velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
 							direction = libraryAim and (libraryAim - offsetpos).Unit
 						end
