@@ -2920,6 +2920,7 @@ run(function()
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local AttackRemote = {FireServer = function() end}
+	local killauraHitfixApplied = false
 	task.spawn(function()
 		AttackRemote = bedwars.Client:Get(remotes.AttackEntity).instance
 	end)
@@ -2952,6 +2953,10 @@ run(function()
 		Name = 'Killaura',
 		Function = function(callback)
 			if callback then
+				pcall(function()
+					debug.setconstant(bedwars.SwordController.attackEntity, 58, 'damage')
+					killauraHitfixApplied = true
+				end)
 				if inputService.TouchEnabled then
 					pcall(function()
 						lplr.PlayerGui.MobileUI['2'].Visible = Limit.Enabled
@@ -3110,6 +3115,12 @@ run(function()
 					task.wait(#attacked > 0 and #attacked * 0.02 or 1 / UpdateRate.Value)
 				until not Killaura.Enabled
 			else
+				if killauraHitfixApplied then
+					pcall(function()
+						debug.setconstant(bedwars.SwordController.attackEntity, 58, 'multiHitCheckDurationSec')
+					end)
+					killauraHitfixApplied = false
+				end
 				store.KillauraTarget = nil
 				for _, v in Boxes do
 					v.Adornee = nil
