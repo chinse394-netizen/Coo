@@ -5894,6 +5894,9 @@ run(function()
 						end
 
 						local targetPart = plr[TargetPart.Value]
+						if projmeta.projectile:find('arrow', 1, true) and plr.Character then
+							targetPart = plr.Character:FindFirstChild('UpperTorso') or plr.Character:FindFirstChild('Torso') or targetPart
+						end
 						local meta = projmeta:getProjectileMeta()
 						if not targetPart or not meta then
 							return old(...)
