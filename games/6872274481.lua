@@ -24532,7 +24532,7 @@ run(function()
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
 										-- Same timing as KillauraOLD: sword cooldown with a 34 per 10s floor.
-										local attackInterval = math.max(math.max(tonumber(meta.sword.attackSpeed) or 0.3, 10 / math.clamp(AttackRate.Value, 20, 100)) + (HitMargin.Value / 1000), 0.18)
+										local attackInterval = math.max(math.max(tonumber(meta.sword.attackSpeed) or 0.3, 10 / math.clamp(AttackRate.Value, 20, 600)) + (HitMargin.Value / 1000), 0.05)
 										-- Take back the time lost to frame delay, but never more than 6ms.
 										nextAttack = math.max(nextAttack + attackInterval, now + attackInterval - 0.006)
 										if not Swing.Enabled and not LegitAura.Enabled then
@@ -24686,8 +24686,8 @@ run(function()
 	AttackRate = Killaura:CreateSlider({
 		Name = 'Attack attempts per 10s',
 		Min = 20,
-		Max = 100,
-		Default = 34,
+		Max = 600,
+		Default = 35,
 		Suffix = ' hits',
 		Tooltip = 'Speed cap. Your sword cooldown sets the real max.'
 	})
@@ -24695,7 +24695,7 @@ run(function()
 		Name = 'Hit margin',
 		Min = -30,
 		Max = 40,
-		Default = 0,
+		Default = -8,
 		Suffix = 'ms',
 		Tooltip = 'ms added to each hit.\nNegative = faster, more rejected hits.\nPositive = slower, safer.'
 	})
