@@ -23971,7 +23971,7 @@ run(function()
 									if delta.Magnitude > AttackRange.Value then continue end
 
 									local actualRoot = (v.Character and v.Character.PrimaryPart) or v.RootPart
-									local now = workspace:GetServerTimeNow()
+									local now = tick()
 									if actualRoot and now >= nextAttack then
 										local attackInterval = 10 / ATTACKS_PER_TEN_SECONDS
 										nextAttack = now + attackInterval - math.min(0.008, attackInterval * 0.025)
@@ -24558,9 +24558,9 @@ run(function()
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
 										-- Same timing as KillauraOLD: sword cooldown with a 34 per 10s floor.
-										local weaponInterval = math.max(tonumber(meta.sword.attackSpeed) or 0.3, 0.05)
-										local attackInterval = math.max(weaponInterval, 10 / math.clamp(AttackRate.Value, 20, 600)) + (HitMargin.Value / 1000)
-										nextAttack = now + math.max(attackInterval, 0.02)
+										local weaponInterval = tonumber(meta.sword.attackSpeed) or 0.3
+										local attackInterval = math.max(math.max(weaponInterval, 10 / math.clamp(AttackRate.Value, 20, 600)) + (HitMargin.Value / 1000), 0.05)
+										nextAttack = now + attackInterval + 0.002
 										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
 											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
