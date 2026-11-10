@@ -23974,7 +23974,7 @@ run(function()
 									local now = tick()
 									if actualRoot and now >= nextAttack then
 										local attackInterval = 10 / ATTACKS_PER_TEN_SECONDS
-										nextAttack = now + attackInterval
+										nextAttack = now + attackInterval - math.min(0.008, attackInterval * 0.025)
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 										local pos = selfpos + dir * math.max(delta.Magnitude - 14.399, 0)
 										bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
