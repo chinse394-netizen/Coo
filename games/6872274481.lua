@@ -24532,7 +24532,7 @@ run(function()
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
 										-- Same timing as KillauraOLD: sword cooldown with a 34 per 10s floor.
-										local attackInterval = math.max(math.min(tonumber(meta.sword.attackSpeed) or 0.3, 0.12), 10 / math.clamp(AttackRate.Value, 20, 100)) + (HitMargin.Value / 1000)
+										local attackInterval = math.max(math.max(tonumber(meta.sword.attackSpeed) or 0.3, 10 / math.clamp(AttackRate.Value, 20, 100)) + (HitMargin.Value / 1000), 0.18)
 										-- Take back the time lost to frame delay, but never more than 6ms.
 										nextAttack = math.max(nextAttack + attackInterval, now + attackInterval - 0.006)
 										if not Swing.Enabled and not LegitAura.Enabled then
@@ -24546,7 +24546,7 @@ run(function()
 											end
 										end
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
-										local pos = selfpos + dir * math.max(delta.Magnitude - math.max(serverRange - 0.05, 0), 0)
+										local pos = selfpos
 										local sent = pcall(function()
 											AttackRemote:FireServer({
 												weapon = sword.tool,
