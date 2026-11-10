@@ -5273,8 +5273,8 @@ run(function()
 	local profiles = setmetatable({}, {__mode = 'k'})
 	local simCache = setmetatable({}, {__mode = 'k'})
 	local JUMP_VELOCITY = 42.6
-	local SIM_STEP = 1 / 30
-	local SIM_STEPS = 66
+	local SIM_STEP = 1 / 60
+	local SIM_STEPS = 132
 	local RATIO_HORIZONS = {0.3, 0.6, 0.9}
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
@@ -5739,7 +5739,7 @@ run(function()
 			local f = evaluate(t)
 			if previousF and previousF * f <= 0 then
 				local low, high, lowF = previousT, t, previousF
-				for _ = 1, 8 do
+				for _ = 1, 10 do
 					local mid = (low + high) / 2
 					local midF = evaluate(mid)
 					if lowF * midF <= 0 then
@@ -5757,7 +5757,7 @@ run(function()
 			end
 			previousF = f
 			previousT = t
-			t += 0.02
+			t += 0.01
 		end
 		return arcs
 	end
