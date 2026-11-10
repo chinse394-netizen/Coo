@@ -24572,30 +24572,23 @@ run(function()
 											end
 										end
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
-										local callOk, accepted = pcall(function()
-											return bedwars.SwordController:attackEntity(v, dir, nil, {
-												playAnimation = false,
-												playSound = false
+										local sent = pcall(function()
+											local currentPosition = actualRoot.Position
+											local currentDirection = CFrame.lookAt(selfpos, currentPosition).LookVector
+											AttackRemote:FireServer({
+												weapon = sword.tool,
+												chargedAttack = {chargeRatio = 0},
+												entityInstance = v.Character,
+												validate = {
+													raycast = {
+														cameraPosition = {value = selfpos},
+														cursorDirection = {value = currentDirection}
+													},
+													targetPosition = {value = currentPosition},
+													selfPosition = {value = selfpos}
+												}
 											})
 										end)
-										local sent = callOk and accepted ~= false
-										if not sent then
-											sent = pcall(function()
-												AttackRemote:FireServer({
-													weapon = sword.tool,
-													chargedAttack = {chargeRatio = 0},
-													entityInstance = v.Character,
-													validate = {
-														raycast = {
-															cameraPosition = {value = selfpos},
-															cursorDirection = {value = dir}
-														},
-														targetPosition = {value = actualRoot.Position},
-														selfPosition = {value = selfpos}
-													}
-												})
-											end)
-										end
 										if sent then
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
 											store.attackReachUpdate = tick() + 1
