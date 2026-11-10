@@ -24543,7 +24543,7 @@ run(function()
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
 										-- Same timing as KillauraOLD: sword cooldown with a 34 per 10s floor.
-										local weaponInterval = (tonumber(meta.sword.attackSpeed) or 0.3) * 0.98
+										local weaponInterval = tonumber(meta.sword.attackSpeed) or 0.3
 										local attackInterval = math.max(math.max(weaponInterval, 10 / math.clamp(AttackRate.Value, 20, 600)) + (HitMargin.Value / 1000), 0.02)
 										-- Take back the time lost to frame delay, but never more than 6ms.
 										nextAttack = now + attackInterval
@@ -24558,7 +24558,6 @@ run(function()
 											end
 										end
 										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
-										local pos = selfpos
 										local callOk, accepted = pcall(function()
 											return bedwars.SwordController:attackEntity(v, dir, nil, {
 												playAnimation = false,
@@ -24566,25 +24565,7 @@ run(function()
 											})
 										end)
 										local sent = callOk and accepted ~= false
-									if not callOk then
-										sent = pcall(function()
-											AttackRemote:FireServer({
-												weapon = sword.tool,
-												chargedAttack = {chargeRatio = 0},
-												entityInstance = v.Character,
-												validate = {
-													raycast = {
-														cameraPosition = {value = pos},
-														cursorDirection = {value = dir}
-													},
-													targetPosition = {value = actualRoot.Position},
-													selfPosition = {value = pos}
-													}
-											})
-										end)
-									end
 										if sent then
-											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
 											store.attackReachUpdate = tick() + 1
 										else
