@@ -12852,23 +12852,17 @@ run(function()
 	local Accessories, FreezeAnimations, Clouds, Lights, Water, Reflections, Nametags, Explosions, CompatibilityLighting, HitregBoost
 	local LowTextures, Highlights, Atmosphere
 	local RenderDistance, Distance
-	local MaxMode, PauseTabbed
-	local renderingPaused = false
-	-- Max FPS mode forces the heavy options on, even if their toggle is off.
-	local function on(toggle)
-		return toggle.Enabled or (MaxMode and MaxMode.Enabled)
-	end
-	local function getDistance()
-		if MaxMode and MaxMode.Enabled then
-			return math.min(Distance.Value, 150)
-		end
-		return Distance.Value
-	end
 	-- Render distance: positions are stored once in plain Lua arrays so the
 	-- distance check is pure math (very cheap). Roblox properties are only
 	-- written when a part flips between near and far.
 	local distParts, distPos, distHidden, distCount, distIndex = {}, {}, {}, 0, 1
-	local DIST_CHUNK = 2500
+	-- Time budgets (seconds per frame). Work stops when the budget is used up,
+	-- so weak PCs never stutter and strong PCs finish faster.
+	local QUEUE_BUDGET = 0.0015
+	local DIST_BUDGET = 0.001
+	local IdleCap, IdleFPS
+	local windowFocused = true
+	local charCache = setmetatable({}, {__mode = 'k'})
 	local effects, util = {}, {}
 	local oldAddNametag
 	local oldFpsCap
@@ -12877,7 +12871,6 @@ run(function()
 	local queue, queueHead, queueTail = {}, 1, 0
 	local reapplyPending = false
 	local measuredFPS, worstFrameMs, peakFrameMs, frames, sampleStart = 0, 0, 0, 0, os.clock()
-	local CHUNK = 300
 	local extraText = 'scanning'
 	local effectClasses = {
 		ParticleEmitter = true,
@@ -12927,12 +12920,20 @@ run(function()
 	end
 
 	-- Walk up the tree once instead of looping every player for every part.
+	-- Models are cached (weak table), so a map with 20k parts does not call
+	-- GetPlayerFromCharacter 20k times.
 	local function getCharacterInfo(object)
 		local node = object
 		while node and node ~= workspace do
 			if node.ClassName == 'Model' then
-				local player = playersService:GetPlayerFromCharacter(node)
-				if player then return true, player == lplr end
+				local cached = charCache[node]
+				if cached == nil then
+					local player = playersService:GetPlayerFromCharacter(node)
+					cached = player and (player == lplr and 2 or 1) or 0
+					-- Only cache "not a character" for models that are not under a player yet.
+					if player then charCache[node] = cached end
+				end
+				if cached > 0 then return true, cached == 2 end
 			end
 			node = node.Parent
 		end
@@ -12986,7 +12987,7 @@ run(function()
 		local isCharacter, isLocal = getCharacterInfo(object)
 		if isBasePart then
 			if isCharacter then
-				if on(Accessories) and not isLocal and object.Parent and object.Parent.ClassName == 'Accessory' then
+				if Accessories.Enabled and not isLocal and object.Parent and object.Parent.ClassName == 'Accessory' then
 					set(object, 'LocalTransparencyModifier', 1)
 				end
 				return
@@ -12994,7 +12995,7 @@ run(function()
 			-- (No per-part CastShadow: GlobalShadows off already kills shadows, and
 			-- saving it for every block was the main cause of the FPS drops.)
 			if Reflections.Enabled then set(object, 'Reflectance', 0) end
-			if on(RenderDistance) and object.Anchored then
+			if RenderDistance.Enabled and object.Anchored then
 				distCount += 1
 				distParts[distCount] = object
 				distPos[distCount] = object.Position
@@ -13006,15 +13007,15 @@ run(function()
 				set(object, 'Material', Enum.Material.SmoothPlastic)
 			end
 			if className == 'MeshPart' then
-				if on(WorldTextures) then set(object, 'TextureID', '') end
+				if WorldTextures.Enabled then set(object, 'TextureID', '') end
 				if MeshDetail.Enabled then set(object, 'RenderFidelity', Enum.RenderFidelity.Performance) end
 			end
 		elseif isOverlay then
-			if on(WorldTextures) and not isCharacter then set(object, 'Transparency', 1) end
+			if WorldTextures.Enabled and not isCharacter then set(object, 'Transparency', 1) end
 		elseif isBillboard then
 			if Nametags.Enabled and not isLocal then set(object, 'Enabled', false) end
 		elseif isHumanoid then
-			if on(FreezeAnimations) and isCharacter and not isLocal and not (HitregBoost.Enabled and killauraRunning()) then
+			if FreezeAnimations.Enabled and isCharacter and not isLocal and not (HitregBoost.Enabled and killauraRunning()) then
 				local animator = object:FindFirstChildOfClass('Animator')
 				if animator then
 					for _, track in animator:GetPlayingAnimationTracks() do
@@ -13075,7 +13076,7 @@ run(function()
 		if Reflections.Enabled then
 			set(lightingService, 'EnvironmentSpecularScale', 0)
 		end
-		if on(CompatibilityLighting) then
+		if CompatibilityLighting.Enabled then
 			set(lightingService, 'Technology', Enum.Technology.Compatibility)
 		end
 		for _, object in lightingService:GetChildren() do
@@ -13128,36 +13129,49 @@ run(function()
 	local lastDistanceCheck = 0
 	local DIST_INTERVAL = 0.05
 
+	-- Remove a dead part by moving the last entry into its slot (no table shifting).
+	-- Without this, broken blocks stayed in the list forever and it kept growing.
+	local function removeDist(i)
+		distParts[i] = distParts[distCount]
+		distPos[i] = distPos[distCount]
+		distHidden[i] = distHidden[distCount]
+		distParts[distCount] = nil
+		distPos[distCount] = nil
+		distHidden[distCount] = nil
+		distCount -= 1
+	end
+
 	local function updateDistance(now)
-		if not on(RenderDistance) or distCount == 0 then return end
+		if not RenderDistance.Enabled or distCount == 0 then return end
 		if now - lastDistanceCheck < DIST_INTERVAL then return end
 		lastDistanceCheck = now
 		local camera = workspace.CurrentCamera
 		if not camera then return end
 		local origin = camera.CFrame.Position
-		local maxDistance = getDistance()
-		for _ = 1, math.min(DIST_CHUNK, distCount) do
-			if distCount == 0 then break end
+		local ox, oy, oz = origin.X, origin.Y, origin.Z
+		-- Squared distance: skips the square root for every part.
+		local maxSq = Distance.Value * Distance.Value
+		local stopAt = os.clock() + DIST_BUDGET
+		local checked = 0
+		while checked < distCount do
 			if distIndex > distCount then distIndex = 1 end
 			local i = distIndex
 			local part = distParts[i]
 			if not part.Parent then
-				-- Broken block: swap the last entry into this slot and shrink the list.
-				distParts[i] = distParts[distCount]
-				distPos[i] = distPos[distCount]
-				distHidden[i] = distHidden[distCount]
-				distParts[distCount] = nil
-				distPos[distCount] = nil
-				distHidden[distCount] = nil
-				distCount -= 1
+				-- Do not move distIndex: the last entry was swapped into this slot.
+				removeDist(i)
 			else
 				distIndex += 1
-				local far = (distPos[i] - origin).Magnitude > maxDistance
+				local pos = distPos[i]
+				local dx, dy, dz = pos.X - ox, pos.Y - oy, pos.Z - oz
+				local far = dx * dx + dy * dy + dz * dz > maxSq
 				if far ~= (distHidden[i] == true) then
 					distHidden[i] = far or nil
 					setHidden(part, far)
 				end
 			end
+			checked += 1
+			if checked % 200 == 0 and os.clock() > stopAt then break end
 		end
 	end
 
@@ -13172,12 +13186,15 @@ run(function()
 
 	local function applyFpsCap()
 		if not setfpscap then return end
-		if FPSBoost.Enabled and UnlockFPS.Enabled then
+		local idle = FPSBoost.Enabled and IdleCap.Enabled and not windowFocused
+		if FPSBoost.Enabled and (UnlockFPS.Enabled or idle) then
 			if oldFpsCap == nil then
 				local ok, cap = pcall(function() return getfpscap and getfpscap() end)
 				oldFpsCap = (ok and cap) or 60
 			end
-			local cap = FPSCap.Value
+			local cap = UnlockFPS.Enabled and FPSCap.Value or oldFpsCap
+			-- Tabbed out: drop to a low cap so the PC stays cool. Cooler PC = more FPS when you come back.
+			if idle then cap = IdleFPS.Value end
 			-- Phones and iPads can't show more than 120 FPS. Uncapping past that only
 			-- heats the device up, and then it slows down (less FPS, not more).
 			if inputService.TouchEnabled and not inputService.KeyboardEnabled then
@@ -13188,16 +13205,6 @@ run(function()
 			pcall(setfpscap, oldFpsCap)
 			oldFpsCap = nil
 		end
-	end
-
-	-- Stops drawing the 3D world while Roblox is not the focused window.
-	-- The game keeps running; only the drawing stops, so the PC stays cool.
-	local function setRenderingPaused(paused)
-		if paused == renderingPaused then return end
-		renderingPaused = paused
-		pcall(function()
-			runService:Set3dRenderingEnabled(not paused)
-		end)
 	end
 
 	-- Toggle changes: undo everything, then redo with the new settings (batched, once per frame max).
@@ -13240,32 +13247,36 @@ run(function()
 					if HitregBoost.Enabled and killauraRunning() then return end
 					updateDistance(now)
 					if queueHead > queueTail then return end
-					local workChunk = HitregBoost.Enabled and killauraRunning() and math.max(50, math.floor(CHUNK / 4)) or CHUNK
-					local stop = math.min(queueHead + workChunk - 1, queueTail)
-					for i = queueHead, stop do
-						local object = queue[i]
-						queue[i] = nil
+					-- Work until the time budget runs out (checked every 32 objects).
+					local stopAt = os.clock() + QUEUE_BUDGET
+					local done = 0
+					while queueHead <= queueTail do
+						local object = queue[queueHead]
+						queue[queueHead] = nil
+						queueHead += 1
 						if object and object.Parent then
 							processObject(object)
 						end
+						done += 1
+						if done % 32 == 0 and os.clock() > stopAt then break end
 					end
-					queueHead = stop + 1
 					if queueHead > queueTail then
 						queueHead, queueTail = 1, 0
 					end
 				end))
 
-				FPSBoost:Clean(workspace.DescendantAdded:Connect(queueObject))
-				FPSBoost:Clean(lightingService.ChildAdded:Connect(processLighting))
-
+				windowFocused = true
 				FPSBoost:Clean(inputService.WindowFocusReleased:Connect(function()
-					if PauseTabbed.Enabled then
-						setRenderingPaused(true)
-					end
+					windowFocused = false
+					applyFpsCap()
 				end))
 				FPSBoost:Clean(inputService.WindowFocused:Connect(function()
-					setRenderingPaused(false)
+					windowFocused = true
+					applyFpsCap()
 				end))
+
+				FPSBoost:Clean(workspace.DescendantAdded:Connect(queueObject))
+				FPSBoost:Clean(lightingService.ChildAdded:Connect(processLighting))
 
 				applyGlobal()
 				rescan()
@@ -13312,9 +13323,10 @@ run(function()
 				table.clear(queue)
 				queueHead, queueTail = 1, 0
 				reapplyPending = false
-				setRenderingPaused(false)
 				clearDistance()
+				table.clear(charCache)
 				restoreAll()
+				windowFocused = true
 				applyFpsCap()
 				for i, v in effects do
 					bedwars.KillEffectController.killEffects[i] = v
@@ -13352,19 +13364,22 @@ run(function()
 			if FPSBoost.Enabled then applyFpsCap() end
 		end
 	})
-	MaxMode = FPSBoost:CreateToggle({
-		Name = 'Max FPS mode',
-		Function = reapply,
-		Default = false,
-		Tooltip = 'Turns on every heavy option: no textures, simple lighting, frozen animations, no accessories, view distance 150. Map looks plain.'
-	})
-	PauseTabbed = FPSBoost:CreateToggle({
-		Name = 'Pause when tabbed out',
-		Function = function(enabled)
-			if not enabled then setRenderingPaused(false) end
+	IdleCap = FPSBoost:CreateToggle({
+		Name = 'Low FPS when tabbed out',
+		Function = function()
+			if FPSBoost.Enabled then applyFpsCap() end
 		end,
 		Default = true,
-		Tooltip = 'Stops drawing the 3D world while Roblox is not your active window.'
+		Tooltip = 'Drops FPS while Roblox is not the focused window. Keeps your PC cool so it runs faster when you come back.'
+	})
+	IdleFPS = FPSBoost:CreateSlider({
+		Name = 'Tabbed out FPS',
+		Min = 5,
+		Max = 60,
+		Default = 15,
+		Function = function()
+			if FPSBoost.Enabled then applyFpsCap() end
+		end
 	})
 	HitregBoost = FPSBoost:CreateToggle({
 		Name = 'Hitreg Boost',
@@ -13396,7 +13411,7 @@ run(function()
 	Shadows = FPSBoost:CreateToggle({Name = 'Reduce shadows', Function = reapply, Default = true, Tooltip = 'Turns off global shadows and map part shadows.'})
 	MeshDetail = FPSBoost:CreateToggle({Name = 'Render quality', Function = reapply, Default = true, Tooltip = 'Lowest render quality, no grass, low-detail meshes.'})
 	RenderDistance = FPSBoost:CreateToggle({Name = 'Render distance', Function = reapply, Default = true, Tooltip = 'Hides map parts that are far from your camera. Biggest FPS boost. Players are never hidden.'})
-	Distance = FPSBoost:CreateSlider({Name = 'Distance', Min = 50, Max = 1500, Default = 350, Tooltip = 'How far you can see map parts (studs). Lower = more FPS.'})
+	Distance = FPSBoost:CreateSlider({Name = 'Distance', Min = 100, Max = 1500, Default = 350, Tooltip = 'How far you can see map parts (studs). Lower = more FPS.'})
 	LowTextures = FPSBoost:CreateToggle({Name = 'Low-res textures', Function = reapply, Default = true, Tooltip = 'Keeps textures but makes them lower quality. Map still looks normal.'})
 	Highlights = FPSBoost:CreateToggle({Name = 'Highlights', Function = reapply, Default = true, Tooltip = 'Turns off Highlight glows (very heavy to draw).'})
 	Atmosphere = FPSBoost:CreateToggle({Name = 'Atmosphere', Function = reapply, Default = true, Tooltip = 'Removes fog haze and glare.'})
