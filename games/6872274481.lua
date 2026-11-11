@@ -24495,6 +24495,39 @@ run(function()
 						pauseWhy[name] = (pauseWhy[name] or 0) + 1
 					end
 				end
+				-- Swing log stats: events sent, damage seen on the target, and gap sizes.
+				local logStats = {sends = 0, hits = 0, gapSum = 0, maxGap = 0}
+				local lastTargetHealth = {}
+				Killaura:Clean(runService.Heartbeat:Connect(function()
+					if not SwingLog.Enabled then
+						return
+					end
+					local target = store.KillauraTarget
+					local health = target and target.Health
+					if type(health) ~= 'number' then
+						return
+					end
+					local before = lastTargetHealth[target]
+					lastTargetHealth[target] = health
+					if before and health < before then
+						logStats.hits += 1
+					end
+				end))
+				task.spawn(function()
+					repeat
+						task.wait(10)
+						if SwingLog.Enabled and logStats.sends > 0 then
+							local message = string.format('10s: sent %d, hits seen %d, avg gap %dms, max gap %dms', logStats.sends, logStats.hits, math.floor(logStats.gapSum / math.max(logStats.sends - 1, 1) * 1000), math.floor(logStats.maxGap * 1000))
+							warn('[KillauraV2] ' .. message)
+							notif('KillauraV2', message, 5)
+						end
+						logStats.sends = 0
+						logStats.hits = 0
+						logStats.gapSum = 0
+						logStats.maxGap = 0
+						table.clear(lastTargetHealth)
+					until not Killaura.Enabled
+				end)
 				local lastTool
 				repeat
 					local attacked = {}
@@ -24616,6 +24649,11 @@ run(function()
 											store.attackReachUpdate = tick() + 1
 											if SwingLog.Enabled then
 												local gap = now - lastSendTime
+												logStats.sends += 1
+												if lastSendTime > 0 and gap < 2 then
+													logStats.gapSum += gap
+													logStats.maxGap = math.max(logStats.maxGap, gap)
+												end
 												if lastSendTime > 0 and gap > attackInterval + 0.05 then
 													local reasons = {}
 													for name, count in pauseWhy do
