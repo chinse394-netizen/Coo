@@ -24562,7 +24562,7 @@ run(function()
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
 										-- One hit event per swing, like the real game.
-										-- The gap comes from the Attack attempts slider (50 gives 0.2 seconds).
+										-- The gap comes from the Attack attempts slider (36 gives about 35 sends per 10 seconds).
 										local weaponInterval = 10 / math.max(AttackRate.Value, 1)
 										-- Optional cap so swings are never faster than the sword cooldown.
 										if CapToCooldown.Enabled then
@@ -24741,7 +24741,7 @@ run(function()
 		Name = 'Attack attempts per 10s',
 		Min = 20,
 		Max = 600,
-		Default = 50,
+		Default = 36,
 		Suffix = ' hits',
 		Tooltip = 'Speed cap. Your sword cooldown sets the real max.'
 	})
