@@ -6005,7 +6005,7 @@ run(function()
 						local lead = isTelepearl and 0 or getLeadTime()
 						local direction
 
-						if plr.RootPart and plr.Player and not isTelepearl then
+						if plr.RootPart and plr.Player and not isTelepearl and not isArrow then
 							local profile = profiles[plr.Player]
 							local reaction = (profile and LearnMoves.Enabled) and getReactionFactor(profile, now) or 1
 							local ratio = 1
@@ -6040,13 +6040,20 @@ run(function()
 						end
 
 						if not direction then
-							local targetPosition = targetPart.Position
+						local targetPosition = targetPart.Position
 							if projmeta.projectile:find('arrow', 1, true) then
 								targetPosition += Vector3.new(0, math.clamp((plr.HipHeight or 2) * 0.3, 0.35, 0.9), 0)
 							end
 							local leadPosition = targetPosition + velocity * lead
-							local libraryAim = prediction.SolveTrajectory(offsetpos, projSpeed, gravity, leadPosition, velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
-							direction = libraryAim and (libraryAim - offsetpos).Unit
+							-- Re-solve using the estimated flight time so moving targets are
+							-- intercepted instead of receiving a single-distance lead guess.
+							for _ = 1, isArrow and 3 or 1 do
+								local libraryAim = prediction.SolveTrajectory(offsetpos, projSpeed, gravity, leadPosition, velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
+								if not libraryAim then break end
+								direction = (libraryAim - offsetpos).Unit
+								local flight = (libraryAim - offsetpos).Magnitude / projSpeed
+								leadPosition = targetPosition + velocity * (lead + flight)
+							end
 						end
 
 						if direction then
