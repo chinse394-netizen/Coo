@@ -24556,9 +24556,11 @@ run(function()
 									local holdingSword = handItem and handItem.Value == sword.tool
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
-										-- Same timing as KillauraOLD: sword cooldown with a 34 per 10s floor.
+										-- Keep the default sword cadence just under 35 hits per 10s.
+										-- The small lead compensates for the scheduler/remote-call overhead
+										-- that otherwise turns a nominal 35 into 34 in a ten-second window.
 										local weaponInterval = tonumber(meta.sword.attackSpeed) or 0.3
-										local attackInterval = math.max(math.max(weaponInterval, 10 / math.clamp(AttackRate.Value, 20, 600)) + (HitMargin.Value / 1000), 0.05)
+										local attackInterval = math.max(math.max(weaponInterval - 0.015, 10 / math.clamp(AttackRate.Value, 20, 600)) + (HitMargin.Value / 1000), 0.05)
 										nextAttack = now + attackInterval + 0.002
 										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
