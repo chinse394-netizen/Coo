@@ -5956,18 +5956,7 @@ run(function()
 						end
 						local scale = VelocityPrediction.Value / 100
 						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
-		local profileSamples = plr.Player and profiles[plr.Player] and profiles[plr.Player].samples
 		local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
-		if profileSamples and #profileSamples >= 3 and os.clock() - profileSamples[#profileSamples].t < 0.12 then
-			local newest = profileSamples[#profileSamples]
-			local previous = profileSamples[#profileSamples - 1]
-			local older = profileSamples[#profileSamples - 2]
-			local dtNew = math.max(newest.t - previous.t, 0.01)
-			local dtOld = math.max(previous.t - older.t, 0.01)
-			local acceleration = ((newest.v - previous.v) / dtNew + (previous.v - older.v) / dtOld) * 0.5
-			acceleration = Vector3.new(math.clamp(acceleration.X, -120, 120), math.clamp(acceleration.Y, -80, 80), math.clamp(acceleration.Z, -120, 120))
-			velocity += acceleration * math.clamp(getLeadTime(), 0, 0.25)
-		end
 						if isTelepearl then
 							velocity = Vector3.zero
 						end
@@ -12852,20 +12841,11 @@ run(function()
 	local Accessories, FreezeAnimations, Clouds, Lights, Water, Reflections, Nametags, Explosions, CompatibilityLighting, HitregBoost
 	local LowTextures, Highlights, Atmosphere
 	local RenderDistance, Distance
-	local AutoDistance, TargetFPS, Sky
-	-- Auto distance: the real distance used. Starts at the slider value.
-	local autoDist = nil
 	-- Render distance: positions are stored once in plain Lua arrays so the
 	-- distance check is pure math (very cheap). Roblox properties are only
 	-- written when a part flips between near and far.
 	local distParts, distPos, distHidden, distCount, distIndex = {}, {}, {}, 0, 1
-	-- Time budgets (seconds per frame). Work stops when the budget is used up,
-	-- so weak PCs never stutter and strong PCs finish faster.
-	local QUEUE_BUDGET = 0.0015
-	local DIST_BUDGET = 0.001
-	local IdleCap, IdleFPS
-	local windowFocused = true
-	local charCache = setmetatable({}, {__mode = 'k'})
+	local DIST_CHUNK = 2500
 	local effects, util = {}, {}
 	local oldAddNametag
 	local oldFpsCap
@@ -12874,6 +12854,7 @@ run(function()
 	local queue, queueHead, queueTail = {}, 1, 0
 	local reapplyPending = false
 	local measuredFPS, worstFrameMs, peakFrameMs, frames, sampleStart = 0, 0, 0, 0, os.clock()
+	local CHUNK = 300
 	local extraText = 'scanning'
 	local effectClasses = {
 		ParticleEmitter = true,
@@ -12923,20 +12904,12 @@ run(function()
 	end
 
 	-- Walk up the tree once instead of looping every player for every part.
-	-- Models are cached (weak table), so a map with 20k parts does not call
-	-- GetPlayerFromCharacter 20k times.
 	local function getCharacterInfo(object)
 		local node = object
 		while node and node ~= workspace do
 			if node.ClassName == 'Model' then
-				local cached = charCache[node]
-				if cached == nil then
-					local player = playersService:GetPlayerFromCharacter(node)
-					cached = player and (player == lplr and 2 or 1) or 0
-					-- Only cache "not a character" for models that are not under a player yet.
-					if player then charCache[node] = cached end
-				end
-				if cached > 0 then return true, cached == 2 end
+				local player = playersService:GetPlayerFromCharacter(node)
+				if player then return true, player == lplr end
 			end
 			node = node.Parent
 		end
@@ -12998,8 +12971,7 @@ run(function()
 			-- (No per-part CastShadow: GlobalShadows off already kills shadows, and
 			-- saving it for every block was the main cause of the FPS drops.)
 			if Reflections.Enabled then set(object, 'Reflectance', 0) end
-			-- Fully see-through parts are not drawn anyway, so skip them (less work).
-			if RenderDistance.Enabled and object.Anchored and object.Transparency < 1 then
+			if RenderDistance.Enabled and object.Anchored then
 				distCount += 1
 				distParts[distCount] = object
 				distPos[distCount] = object.Position
@@ -13063,15 +13035,6 @@ run(function()
 			end
 			-- NOTE: do NOT touch MaterialService.Use2022Materials. BedWars blocks get
 			-- their color from MaterialVariants, and turning it off makes the map white.
-		end
-		if Sky.Enabled then
-			-- Stars, sun and moon cost a little every frame and add nothing in a fight.
-			for _, object in lightingService:GetChildren() do
-				if object.ClassName == 'Sky' then
-					set(object, 'StarCount', 0)
-					set(object, 'CelestialBodiesShown', false)
-				end
-			end
 		end
 		if Atmosphere.Enabled then
 			for _, object in lightingService:GetChildren() do
@@ -13142,18 +13105,6 @@ run(function()
 	local lastDistanceCheck = 0
 	local DIST_INTERVAL = 0.05
 
-	-- Remove a dead part by moving the last entry into its slot (no table shifting).
-	-- Without this, broken blocks stayed in the list forever and it kept growing.
-	local function removeDist(i)
-		distParts[i] = distParts[distCount]
-		distPos[i] = distPos[distCount]
-		distHidden[i] = distHidden[distCount]
-		distParts[distCount] = nil
-		distPos[distCount] = nil
-		distHidden[distCount] = nil
-		distCount -= 1
-	end
-
 	local function updateDistance(now)
 		if not RenderDistance.Enabled or distCount == 0 then return end
 		if now - lastDistanceCheck < DIST_INTERVAL then return end
@@ -13161,31 +13112,19 @@ run(function()
 		local camera = workspace.CurrentCamera
 		if not camera then return end
 		local origin = camera.CFrame.Position
-		local ox, oy, oz = origin.X, origin.Y, origin.Z
-		-- Squared distance: skips the square root for every part.
-		local viewDist = (AutoDistance.Enabled and autoDist) or Distance.Value
-		local maxSq = viewDist * viewDist
-		local stopAt = os.clock() + DIST_BUDGET
-		local checked = 0
-		while checked < distCount do
+		local maxDistance = Distance.Value
+		for _ = 1, math.min(DIST_CHUNK, distCount) do
 			if distIndex > distCount then distIndex = 1 end
 			local i = distIndex
-			local part = distParts[i]
-			if not part.Parent then
-				-- Do not move distIndex: the last entry was swapped into this slot.
-				removeDist(i)
-			else
-				distIndex += 1
-				local pos = distPos[i]
-				local dx, dy, dz = pos.X - ox, pos.Y - oy, pos.Z - oz
-				local far = dx * dx + dy * dy + dz * dz > maxSq
-				if far ~= (distHidden[i] == true) then
+			distIndex += 1
+			local far = (distPos[i] - origin).Magnitude > maxDistance
+			if far ~= (distHidden[i] == true) then
+				local part = distParts[i]
+				if part.Parent then
 					distHidden[i] = far or nil
 					setHidden(part, far)
 				end
 			end
-			checked += 1
-			if checked % 200 == 0 and os.clock() > stopAt then break end
 		end
 	end
 
@@ -13200,15 +13139,12 @@ run(function()
 
 	local function applyFpsCap()
 		if not setfpscap then return end
-		local idle = FPSBoost.Enabled and IdleCap.Enabled and not windowFocused
-		if FPSBoost.Enabled and (UnlockFPS.Enabled or idle) then
+		if FPSBoost.Enabled and UnlockFPS.Enabled then
 			if oldFpsCap == nil then
 				local ok, cap = pcall(function() return getfpscap and getfpscap() end)
 				oldFpsCap = (ok and cap) or 60
 			end
-			local cap = UnlockFPS.Enabled and FPSCap.Value or oldFpsCap
-			-- Tabbed out: drop to a low cap so the PC stays cool. Cooler PC = more FPS when you come back.
-			if idle then cap = IdleFPS.Value end
+			local cap = FPSCap.Value
 			-- Phones and iPads can't show more than 120 FPS. Uncapping past that only
 			-- heats the device up, and then it slows down (less FPS, not more).
 			if inputService.TouchEnabled and not inputService.KeyboardEnabled then
@@ -13253,23 +13189,7 @@ run(function()
 						measuredFPS = math.floor(frames / elapsed)
 						peakFrameMs = worstFrameMs * 1000
 						-- Build the label once a second, not every frame (less garbage).
-						-- Auto distance: shrink view when FPS is under target, grow it back
-						-- slowly when there is room. Never goes past the Distance slider.
-						if AutoDistance.Enabled and RenderDistance.Enabled then
-							local maxDist = Distance.Value
-							autoDist = autoDist or maxDist
-							local target = TargetFPS.Value
-							if measuredFPS < target * 0.9 then
-								autoDist = math.max(100, autoDist * 0.85)
-							elseif measuredFPS > target * 1.15 then
-								autoDist = math.min(maxDist, autoDist + 25)
-							end
-							autoDist = math.min(autoDist, maxDist)
-							extraText = measuredFPS .. ' FPS | ' .. math.floor(autoDist) .. ' studs'
-						else
-							autoDist = nil
-							extraText = measuredFPS .. ' FPS | peak ' .. math.floor(peakFrameMs) .. 'ms'
-						end
+						extraText = measuredFPS .. ' FPS | peak ' .. math.floor(peakFrameMs) .. 'ms'
 						worstFrameMs = 0
 						frames, sampleStart = 0, now
 					end
@@ -13277,32 +13197,19 @@ run(function()
 					if HitregBoost.Enabled and killauraRunning() then return end
 					updateDistance(now)
 					if queueHead > queueTail then return end
-					-- Work until the time budget runs out (checked every 32 objects).
-					local stopAt = os.clock() + QUEUE_BUDGET
-					local done = 0
-					while queueHead <= queueTail do
-						local object = queue[queueHead]
-						queue[queueHead] = nil
-						queueHead += 1
+					local workChunk = HitregBoost.Enabled and killauraRunning() and math.max(50, math.floor(CHUNK / 4)) or CHUNK
+					local stop = math.min(queueHead + workChunk - 1, queueTail)
+					for i = queueHead, stop do
+						local object = queue[i]
+						queue[i] = nil
 						if object and object.Parent then
 							processObject(object)
 						end
-						done += 1
-						if done % 32 == 0 and os.clock() > stopAt then break end
 					end
+					queueHead = stop + 1
 					if queueHead > queueTail then
 						queueHead, queueTail = 1, 0
 					end
-				end))
-
-				windowFocused = true
-				FPSBoost:Clean(inputService.WindowFocusReleased:Connect(function()
-					windowFocused = false
-					applyFpsCap()
-				end))
-				FPSBoost:Clean(inputService.WindowFocused:Connect(function()
-					windowFocused = true
-					applyFpsCap()
 				end))
 
 				FPSBoost:Clean(workspace.DescendantAdded:Connect(queueObject))
@@ -13354,10 +13261,7 @@ run(function()
 				queueHead, queueTail = 1, 0
 				reapplyPending = false
 				clearDistance()
-				table.clear(charCache)
-				autoDist = nil
 				restoreAll()
-				windowFocused = true
 				applyFpsCap()
 				for i, v in effects do
 					bedwars.KillEffectController.killEffects[i] = v
@@ -13395,23 +13299,6 @@ run(function()
 			if FPSBoost.Enabled then applyFpsCap() end
 		end
 	})
-	IdleCap = FPSBoost:CreateToggle({
-		Name = 'Low FPS when tabbed out',
-		Function = function()
-			if FPSBoost.Enabled then applyFpsCap() end
-		end,
-		Default = true,
-		Tooltip = 'Drops FPS while Roblox is not the focused window. Keeps your PC cool so it runs faster when you come back.'
-	})
-	IdleFPS = FPSBoost:CreateSlider({
-		Name = 'Tabbed out FPS',
-		Min = 5,
-		Max = 60,
-		Default = 15,
-		Function = function()
-			if FPSBoost.Enabled then applyFpsCap() end
-		end
-	})
 	HitregBoost = FPSBoost:CreateToggle({
 		Name = 'Hitreg Boost',
 		Default = true,
@@ -13443,16 +13330,6 @@ run(function()
 	MeshDetail = FPSBoost:CreateToggle({Name = 'Render quality', Function = reapply, Default = true, Tooltip = 'Lowest render quality, no grass, low-detail meshes.'})
 	RenderDistance = FPSBoost:CreateToggle({Name = 'Render distance', Function = reapply, Default = true, Tooltip = 'Hides map parts that are far from your camera. Biggest FPS boost. Players are never hidden.'})
 	Distance = FPSBoost:CreateSlider({Name = 'Distance', Min = 100, Max = 1500, Default = 350, Tooltip = 'How far you can see map parts (studs). Lower = more FPS.'})
-	AutoDistance = FPSBoost:CreateToggle({
-		Name = 'Auto distance',
-		Function = function()
-			autoDist = nil
-		end,
-		Default = true,
-		Tooltip = 'Lowers render distance by itself when FPS drops, then raises it back. Never goes past the Distance slider.'
-	})
-	TargetFPS = FPSBoost:CreateSlider({Name = 'Target FPS', Min = 30, Max = 360, Default = 120, Tooltip = 'Auto distance tries to keep your FPS at or above this.'})
-	Sky = FPSBoost:CreateToggle({Name = 'Simple sky', Function = reapply, Default = true, Tooltip = 'Hides stars, sun and moon.'})
 	LowTextures = FPSBoost:CreateToggle({Name = 'Low-res textures', Function = reapply, Default = true, Tooltip = 'Keeps textures but makes them lower quality. Map still looks normal.'})
 	Highlights = FPSBoost:CreateToggle({Name = 'Highlights', Function = reapply, Default = true, Tooltip = 'Turns off Highlight glows (very heavy to draw).'})
 	Atmosphere = FPSBoost:CreateToggle({Name = 'Atmosphere', Function = reapply, Default = true, Tooltip = 'Removes fog haze and glare.'})
@@ -24635,6 +24512,9 @@ run(function()
 									end
 								end
 								local selfpos = root.Position
+								-- One swing timer for the whole pass, so every target in range
+								-- is hit on the same swing instead of one target per interval.
+								local swingReady = tick() >= nextAttack
 
 								for _, v in plrs do
 									if not Killaura.Enabled then break end
@@ -24662,9 +24542,9 @@ run(function()
 									local now = tick()
 									local holdingSword = handItem and handItem.Value == sword.tool
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
-									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
-										-- Fast cadence; movement handling below keeps strafing from pausing attacks.
-										local weaponInterval = 0.05
+									if actualRoot and holdingSword and targetAlive and swingReady and not isFuryPotionInUse() then
+										-- Use the sword's own attack speed so swings match what the server accepts.
+										local weaponInterval = tonumber(meta.sword.attackSpeed) or 0.25
 										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), 0.03)
 										nextAttack = now + attackInterval + 0.002
 										if not Swing.Enabled and not LegitAura.Enabled then
