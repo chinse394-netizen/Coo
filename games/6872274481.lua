@@ -2540,7 +2540,7 @@ run(function()
 
 											local ray = workspace:Raycast(root.Position, AntiFallDirection, rayCheck)
 											if ray then
-												for _ = 1, 10 do
+					for _ = 1, 14 do
 													local dpos = roundPos(ray.Position + ray.Normal * 1.5) + Vector3.new(0, 3, 0)
 													if not getPlacedBlock(dpos) then
 														top = Vector3.new(top.X, pos.Y, top.Z)
@@ -5750,7 +5750,7 @@ run(function()
 			local f = evaluate(t)
 			if previousF and previousF * f <= 0 then
 				local low, high, lowF = previousT, t, previousF
-				for _ = 1, 10 do
+				for _ = 1, 14 do
 					local mid = (low + high) / 2
 					local midF = evaluate(mid)
 					if lowF * midF <= 0 then
@@ -5768,7 +5768,9 @@ run(function()
 			end
 			previousF = f
 			previousT = t
-			t += 0.01
+			-- Use a 5 ms scan increment so fast targets and shallow arcs are not
+			-- skipped between samples.
+			t += 0.005
 		end
 		return arcs
 	end
