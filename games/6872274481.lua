@@ -24559,9 +24559,8 @@ run(function()
 									local holdingSword = handItem and handItem.Value == sword.tool
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
-										-- Stay below BedWars' roughly 300-hit/minute rate-limit threshold.
-										-- 0.21s is about 285 hits/minute while remaining responsive.
-										local weaponInterval = 0.21
+										-- Fast cadence; movement handling below keeps strafing from pausing attacks.
+										local weaponInterval = 0.1
 										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), 0.05)
 										nextAttack = now + attackInterval + 0.002
 										if not Swing.Enabled and not LegitAura.Enabled then
