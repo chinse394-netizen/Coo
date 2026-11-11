@@ -24561,8 +24561,8 @@ run(function()
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
 										-- Fast cadence; movement handling below keeps strafing from pausing attacks.
-										local weaponInterval = 0.1
-										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), 0.05)
+										local weaponInterval = 0.05
+										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), 0.03)
 										nextAttack = now + attackInterval + 0.002
 										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
