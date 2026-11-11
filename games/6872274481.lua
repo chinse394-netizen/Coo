@@ -24523,10 +24523,10 @@ run(function()
 						local health = character:GetAttribute('Health')
 						if type(health) == 'number' and type(lockedHealth) == 'number' and health < lockedHealth then
 							acceptedAt = tick()
-							denseProbes = 3
+							denseProbes = 12
 							-- The server counted the hit about one ping ago, and our next event needs one ping to arrive.
 							local ping = lplr:GetNetworkPing()
-							nextAttack = acceptedAt + (ServerCooldown.Value / 1000) - (ping * 2)
+							nextAttack = acceptedAt + (math.max(ServerCooldown.Value, 255) / 1000) - (ping * 2)
 						end
 						lockedHealth = health
 					end)
@@ -24655,12 +24655,12 @@ run(function()
 										-- so the server rate limit can never be reached (about 22 events per second at most).
 										lockTo(v.Character)
 										local probe = math.max(ProbeStep.Value, 40) / 1000
-										-- Right at the server edge, probe every 5ms for 3 sends so the hit
+										-- Right at the server edge, probe every 6ms for 12 sends so the hit
 										-- lands within a few ms of the cooldown ending.
 										if LockToHits.Enabled and (tick() - acceptedAt) < 1 then
 											if denseProbes > 0 then
 												denseProbes -= 1
-												probe = 0.005
+												probe = 0.006
 											else
 												probe = 0.025
 											end
@@ -25159,7 +25159,7 @@ run(function()
 		Name = 'Server cooldown',
 		Min = 240,
 		Max = 330,
-		Default = 276,
+		Default = 262,
 		Decimal = 10,
 		Suffix = 'ms',
 		Tooltip = 'Hit lock starts probing this long after a counted hit. Too early only wastes a few events.'
