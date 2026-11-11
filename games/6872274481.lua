@@ -24523,7 +24523,7 @@ run(function()
 						local health = character:GetAttribute('Health')
 						if type(health) == 'number' and type(lockedHealth) == 'number' and health < lockedHealth then
 							acceptedAt = tick()
-							denseProbes = 5
+							denseProbes = 3
 							-- The server counted the hit about one ping ago, and our next event needs one ping to arrive.
 							local ping = lplr:GetNetworkPing()
 							nextAttack = acceptedAt + (ServerCooldown.Value / 1000) - (ping * 2)
@@ -24652,17 +24652,17 @@ run(function()
 											weaponInterval = math.max(weaponInterval, tonumber(meta.sword.attackSpeed) or 0.3)
 										end
 										-- Probe mode: an event every few ms near the server edge, with hard limits
-										-- so the server rate limit can never be reached (max 30 events per second).
+										-- so the server rate limit can never be reached (max 16 events per second).
 										lockTo(v.Character)
 										local probe = math.max(ProbeStep.Value, 40) / 1000
-										-- Right at the server edge, probe every 4ms for 5 sends so the hit
+										-- Right at the server edge, probe every 5ms for 3 sends so the hit
 										-- lands within a few ms of the cooldown ending.
 										if LockToHits.Enabled and (tick() - acceptedAt) < 1 then
 											if denseProbes > 0 then
 												denseProbes -= 1
-												probe = 0.004
+												probe = 0.005
 											else
-												probe = 0.012
+												probe = 0.025
 											end
 										end
 										local cutoff = now - 1
@@ -24670,7 +24670,7 @@ run(function()
 											table.remove(sendTimes, 1)
 										end
 										table.insert(sendTimes, now)
-										if #sendTimes >= 30 then
+										if #sendTimes >= 16 then
 											probe = math.max(probe, (sendTimes[1] + 1) - now)
 										end
 										nextAttack = now + probe
