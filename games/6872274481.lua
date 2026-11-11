@@ -24501,6 +24501,7 @@ run(function()
 				-- last hit the server really counted, instead of a free running clock.
 				local acceptedAt = 0
 				local lastSwingFx = 0
+				local denseProbes = 0
 				local sendTimes = {}
 				local lockedChar = nil
 				local lockedHealth = nil
@@ -24522,6 +24523,7 @@ run(function()
 						local health = character:GetAttribute('Health')
 						if type(health) == 'number' and type(lockedHealth) == 'number' and health < lockedHealth then
 							acceptedAt = tick()
+							denseProbes = 5
 							-- The server counted the hit about one ping ago, and our next event needs one ping to arrive.
 							local ping = lplr:GetNetworkPing()
 							nextAttack = acceptedAt + (ServerCooldown.Value / 1000) - (ping * 2)
@@ -24650,15 +24652,25 @@ run(function()
 											weaponInterval = math.max(weaponInterval, tonumber(meta.sword.attackSpeed) or 0.3)
 										end
 										-- Probe mode: an event every few ms near the server edge, with hard limits
-										-- so the server rate limit can never be reached (max 22 events per second).
+										-- so the server rate limit can never be reached (max 30 events per second).
 										lockTo(v.Character)
 										local probe = math.max(ProbeStep.Value, 40) / 1000
+										-- Right at the server edge, probe every 4ms for 5 sends so the hit
+										-- lands within a few ms of the cooldown ending.
+										if LockToHits.Enabled and (tick() - acceptedAt) < 1 then
+											if denseProbes > 0 then
+												denseProbes -= 1
+												probe = 0.004
+											else
+												probe = 0.012
+											end
+										end
 										local cutoff = now - 1
 										while sendTimes[1] and sendTimes[1] < cutoff do
 											table.remove(sendTimes, 1)
 										end
 										table.insert(sendTimes, now)
-										if #sendTimes >= 22 then
+										if #sendTimes >= 30 then
 											probe = math.max(probe, (sendTimes[1] + 1) - now)
 										end
 										nextAttack = now + probe
@@ -25146,7 +25158,7 @@ run(function()
 		Name = 'Server cooldown',
 		Min = 240,
 		Max = 330,
-		Default = 270,
+		Default = 276,
 		Decimal = 10,
 		Suffix = 'ms',
 		Tooltip = 'Hit lock starts probing this long after a counted hit. Too early only wastes a few events.'
