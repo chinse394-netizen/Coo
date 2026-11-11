@@ -24523,20 +24523,11 @@ run(function()
 									end
 								end
 								local selfpos = root.Position
-								local flatFacing = root.CFrame.LookVector * Vector3.new(1, 0, 1)
-								local localfacing = flatFacing.Magnitude > 0 and flatFacing.Unit or nil
-								local moving = root.AssemblyLinearVelocity.Magnitude > 0.1
 
 								for _, v in plrs do
 									if not Killaura.Enabled then break end
 									if not v.RootPart then continue end
 									local delta = (v.RootPart.Position - selfpos)
-									local flatDelta = delta * Vector3.new(1, 0, 1)
-									if flatDelta.Magnitude <= 0 then continue end
-									local angle = localfacing and math.acos(math.clamp(localfacing:Dot(flatDelta.Unit), -1, 1)) or 0
-									-- Keep acquiring/attacking targets while strafing or repositioning.
-									-- Movement should not create an angle-check pause in the attack loop.
-									if not moving and angle > (math.rad(AngleSlider.Value) / 2) then continue end
 
 									table.insert(attacked, {
 										Entity = v,
