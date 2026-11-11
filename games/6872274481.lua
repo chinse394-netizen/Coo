@@ -24333,6 +24333,7 @@ run(function()
 	local Limit
 	local LegitAura
 	local SwingLog
+	local CapToCooldown
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local swordEffectFunction, swordEffectController
@@ -24560,11 +24561,13 @@ run(function()
 									local holdingSword = handItem and handItem.Value == sword.tool
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
-										-- One hit event per swing, like the real game. Never swing faster than the
-										-- sword's own cooldown, or the server rate limits the hits.
-										-- The Attack attempts slider can only slow swings down from that limit.
-										local swordInterval = tonumber(meta.sword.attackSpeed) or 0.3
-										local weaponInterval = math.max(10 / math.max(AttackRate.Value, 1), swordInterval)
+										-- One hit event per swing, like the real game.
+										-- The gap comes from the Attack attempts slider (50 gives 0.2 seconds).
+										local weaponInterval = 10 / math.max(AttackRate.Value, 1)
+										-- Optional cap so swings are never faster than the sword cooldown.
+										if CapToCooldown.Enabled then
+											weaponInterval = math.max(weaponInterval, tonumber(meta.sword.attackSpeed) or 0.3)
+										end
 										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), 0.03)
 										-- Small extra gap so network jitter does not bunch two hits together.
 										nextAttack = now + attackInterval + 0.004
@@ -24738,7 +24741,7 @@ run(function()
 		Name = 'Attack attempts per 10s',
 		Min = 20,
 		Max = 600,
-		Default = 35,
+		Default = 50,
 		Suffix = ' hits',
 		Tooltip = 'Speed cap. Your sword cooldown sets the real max.'
 	})
@@ -24953,6 +24956,10 @@ run(function()
 	SwingLog = Killaura:CreateToggle({
 		Name = 'Swing log',
 		Tooltip = 'Prints each pause between swings and the likely reason.\nTurn on to debug, then off.'
+	})
+	CapToCooldown = Killaura:CreateToggle({
+		Name = 'Cap to sword cooldown',
+		Tooltip = 'On: never swing faster than the sword cooldown (about 0.3s).\nOff: swing gap comes only from the slider. Faster swings than the cooldown get ignored by the server.'
 	})
 
 	task.defer(function()
