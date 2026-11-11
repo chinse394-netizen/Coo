@@ -24549,12 +24549,14 @@ run(function()
 										local swordInterval = tonumber(meta.sword.attackSpeed) or 0.3
 										local weaponInterval = math.max(10 / math.max(AttackRate.Value, 1), swordInterval)
 										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), 0.03)
+										-- Only the first target of a swing plays the swing effect.
+										local firstOfSwing = not swingScheduled
 										-- Schedule once per swing, counting from the real send time.
 										if not swingScheduled then
 											swingScheduled = true
 											nextAttack = now + attackInterval + 0.002
 										end
-										if not Swing.Enabled and not LegitAura.Enabled then
+										if firstOfSwing and not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
 											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
 												bedwars.ScytheController:playLocalAnimation()
