@@ -24506,9 +24506,9 @@ run(function()
 									local switched = switchItem(sword.tool, 0.08)
 									lastTool = sword.tool
 									if switched then
-										-- EquipItem is asynchronous.  Give the server one short tick to
-										-- accept the new weapon before sending an attack request.
-										nextAttack = math.max(nextAttack, tick() + 0.08)
+										-- switchItem already waited 0.08s for the server to accept the weapon,
+										-- so only a short extra gap is needed here (was a second 0.08s pause).
+										nextAttack = math.max(nextAttack, tick() + 0.02)
 									end
 								end
 								local selfpos = root.Position
