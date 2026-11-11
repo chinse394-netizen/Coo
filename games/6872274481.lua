@@ -5284,6 +5284,7 @@ run(function()
 	local JukeGuard
 	local SmoothVel
 	local AccuracyLog
+	local LongRange
 	local lastAim
 	local shotStats = {hits = 0, total = 0}
 	local ProjectileAimbot
@@ -5966,6 +5967,12 @@ run(function()
 							end
 						end
 						local scale = VelocityPrediction.Value / 100
+						-- Long flights: players rarely keep one speed for a full second, so trust the
+						-- current speed a little less the longer the arrow is in the air.
+						if projmeta.projectile:find('arrow', 1, true) then
+							local flightGuess = (targetPart.Position - offsetpos).Magnitude / math.max(projSpeed, 1)
+							scale *= 1 - math.clamp((flightGuess - 0.5) * (LongRange.Value / 100), 0, 0.3)
+						end
 						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
 						local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
 						if isTelepearl then
@@ -6083,6 +6090,14 @@ run(function()
 		Name = 'Smooth velocity',
 		Default = true,
 		Tooltip = 'Mixes the replicated speed with the speed seen on your screen.\nTurn off if shots get worse.'
+	})
+	LongRange = ProjectileAimbot:CreateSlider({
+		Name = 'Long range damping',
+		Min = 0,
+		Max = 100,
+		Default = 25,
+		Suffix = '%',
+		Tooltip = 'Trusts the target speed a bit less on long shots. Max 30 percent less.\n0 turns it off.'
 	})
 	AccuracyLog = ProjectileAimbot:CreateToggle({
 		Name = 'Accuracy log',
