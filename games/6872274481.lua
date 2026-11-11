@@ -12852,6 +12852,9 @@ run(function()
 	local Accessories, FreezeAnimations, Clouds, Lights, Water, Reflections, Nametags, Explosions, CompatibilityLighting, HitregBoost
 	local LowTextures, Highlights, Atmosphere
 	local RenderDistance, Distance
+	local AutoDistance, TargetFPS, Sky
+	-- Auto distance: the real distance used. Starts at the slider value.
+	local autoDist = nil
 	-- Render distance: positions are stored once in plain Lua arrays so the
 	-- distance check is pure math (very cheap). Roblox properties are only
 	-- written when a part flips between near and far.
@@ -12995,7 +12998,8 @@ run(function()
 			-- (No per-part CastShadow: GlobalShadows off already kills shadows, and
 			-- saving it for every block was the main cause of the FPS drops.)
 			if Reflections.Enabled then set(object, 'Reflectance', 0) end
-			if RenderDistance.Enabled and object.Anchored then
+			-- Fully see-through parts are not drawn anyway, so skip them (less work).
+			if RenderDistance.Enabled and object.Anchored and object.Transparency < 1 then
 				distCount += 1
 				distParts[distCount] = object
 				distPos[distCount] = object.Position
@@ -13059,6 +13063,15 @@ run(function()
 			end
 			-- NOTE: do NOT touch MaterialService.Use2022Materials. BedWars blocks get
 			-- their color from MaterialVariants, and turning it off makes the map white.
+		end
+		if Sky.Enabled then
+			-- Stars, sun and moon cost a little every frame and add nothing in a fight.
+			for _, object in lightingService:GetChildren() do
+				if object.ClassName == 'Sky' then
+					set(object, 'StarCount', 0)
+					set(object, 'CelestialBodiesShown', false)
+				end
+			end
 		end
 		if Atmosphere.Enabled then
 			for _, object in lightingService:GetChildren() do
@@ -13150,7 +13163,8 @@ run(function()
 		local origin = camera.CFrame.Position
 		local ox, oy, oz = origin.X, origin.Y, origin.Z
 		-- Squared distance: skips the square root for every part.
-		local maxSq = Distance.Value * Distance.Value
+		local viewDist = (AutoDistance.Enabled and autoDist) or Distance.Value
+		local maxSq = viewDist * viewDist
 		local stopAt = os.clock() + DIST_BUDGET
 		local checked = 0
 		while checked < distCount do
@@ -13239,7 +13253,23 @@ run(function()
 						measuredFPS = math.floor(frames / elapsed)
 						peakFrameMs = worstFrameMs * 1000
 						-- Build the label once a second, not every frame (less garbage).
-						extraText = measuredFPS .. ' FPS | peak ' .. math.floor(peakFrameMs) .. 'ms'
+						-- Auto distance: shrink view when FPS is under target, grow it back
+						-- slowly when there is room. Never goes past the Distance slider.
+						if AutoDistance.Enabled and RenderDistance.Enabled then
+							local maxDist = Distance.Value
+							autoDist = autoDist or maxDist
+							local target = TargetFPS.Value
+							if measuredFPS < target * 0.9 then
+								autoDist = math.max(100, autoDist * 0.85)
+							elseif measuredFPS > target * 1.15 then
+								autoDist = math.min(maxDist, autoDist + 25)
+							end
+							autoDist = math.min(autoDist, maxDist)
+							extraText = measuredFPS .. ' FPS | ' .. math.floor(autoDist) .. ' studs'
+						else
+							autoDist = nil
+							extraText = measuredFPS .. ' FPS | peak ' .. math.floor(peakFrameMs) .. 'ms'
+						end
 						worstFrameMs = 0
 						frames, sampleStart = 0, now
 					end
@@ -13325,6 +13355,7 @@ run(function()
 				reapplyPending = false
 				clearDistance()
 				table.clear(charCache)
+				autoDist = nil
 				restoreAll()
 				windowFocused = true
 				applyFpsCap()
@@ -13412,6 +13443,16 @@ run(function()
 	MeshDetail = FPSBoost:CreateToggle({Name = 'Render quality', Function = reapply, Default = true, Tooltip = 'Lowest render quality, no grass, low-detail meshes.'})
 	RenderDistance = FPSBoost:CreateToggle({Name = 'Render distance', Function = reapply, Default = true, Tooltip = 'Hides map parts that are far from your camera. Biggest FPS boost. Players are never hidden.'})
 	Distance = FPSBoost:CreateSlider({Name = 'Distance', Min = 100, Max = 1500, Default = 350, Tooltip = 'How far you can see map parts (studs). Lower = more FPS.'})
+	AutoDistance = FPSBoost:CreateToggle({
+		Name = 'Auto distance',
+		Function = function()
+			autoDist = nil
+		end,
+		Default = true,
+		Tooltip = 'Lowers render distance by itself when FPS drops, then raises it back. Never goes past the Distance slider.'
+	})
+	TargetFPS = FPSBoost:CreateSlider({Name = 'Target FPS', Min = 30, Max = 360, Default = 120, Tooltip = 'Auto distance tries to keep your FPS at or above this.'})
+	Sky = FPSBoost:CreateToggle({Name = 'Simple sky', Function = reapply, Default = true, Tooltip = 'Hides stars, sun and moon.'})
 	LowTextures = FPSBoost:CreateToggle({Name = 'Low-res textures', Function = reapply, Default = true, Tooltip = 'Keeps textures but makes them lower quality. Map still looks normal.'})
 	Highlights = FPSBoost:CreateToggle({Name = 'Highlights', Function = reapply, Default = true, Tooltip = 'Turns off Highlight glows (very heavy to draw).'})
 	Atmosphere = FPSBoost:CreateToggle({Name = 'Atmosphere', Function = reapply, Default = true, Tooltip = 'Removes fog haze and glare.'})
