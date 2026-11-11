@@ -5319,7 +5319,10 @@ run(function()
 	local function getLeadTime()
 		local lead = 0
 		if PingComp.Enabled then
-			lead += (getPingSeconds() / 2) + (InterpDelay.Value / 1000) - 0.045
+			-- Other players show about half a ping plus the interpolation delay behind the server.
+			-- Your shot also needs half a ping to reach the server, so the target moves a full ping
+			-- plus the delay before the arrow starts. Half a ping was not enough for walking targets.
+			lead += getPingSeconds() + (InterpDelay.Value / 1000) - 0.03
 		end
 		if FPSComp.Enabled then
 			lead += frameTime
@@ -5964,7 +5967,7 @@ run(function()
 						end
 						local scale = VelocityPrediction.Value / 100
 						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
-		local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
+						local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
 						if isTelepearl then
 							velocity = Vector3.zero
 						end
@@ -5985,7 +5988,7 @@ run(function()
 							local simVelocity = Vector3.new(velocity.X * ratio, velocity.Y, velocity.Z * ratio)
 							local cached = simCache[plr]
 							local path
-			if cached and now - cached.t < 0.04 then
+							if cached and now - cached.t < 0.04 then
 								path = cached.path
 							else
 								local success, result = pcall(simulatePath, plr, profile, simVelocity, now, playerGravity, reaction)
