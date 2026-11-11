@@ -5959,7 +5959,7 @@ run(function()
 						local scale = VelocityPrediction.Value / 100
 						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
 		local profileSamples = plr.Player and profiles[plr.Player] and profiles[plr.Player].samples
-		if profileSamples and #profileSamples >= 3 then
+		if profileSamples and #profileSamples >= 3 and os.clock() - profileSamples[#profileSamples].t < 0.12 then
 			local newest = profileSamples[#profileSamples]
 			local previous = profileSamples[#profileSamples - 1]
 			local older = profileSamples[#profileSamples - 2]
@@ -5967,7 +5967,9 @@ run(function()
 			local dtOld = math.max(previous.t - older.t, 0.01)
 			local acceleration = ((newest.v - previous.v) / dtNew + (previous.v - older.v) / dtOld) * 0.5
 			acceleration = Vector3.new(math.clamp(acceleration.X, -120, 120), math.clamp(acceleration.Y, -80, 80), math.clamp(acceleration.Z, -120, 120))
-			velocity += acceleration * math.clamp(getLeadTime(), 0, 0.25)
+			-- Use acceleration as a small correction only; large corrections amplify
+			-- replication noise and make shots miss when a target changes direction.
+			velocity += acceleration * math.clamp(getLeadTime() * 0.5, 0, 0.12)
 		end
 						if isTelepearl then
 							velocity = Vector3.zero
@@ -5989,7 +5991,7 @@ run(function()
 							local simVelocity = Vector3.new(velocity.X * ratio, velocity.Y, velocity.Z * ratio)
 							local cached = simCache[plr]
 							local path
-							if cached and now - cached.t < 0.04 then
+			if cached and now - cached.t < 0.016 then
 								path = cached.path
 							else
 								local success, result = pcall(simulatePath, plr, profile, simVelocity, now, playerGravity, reaction)
