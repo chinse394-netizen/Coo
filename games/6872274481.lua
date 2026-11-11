@@ -24544,18 +24544,15 @@ run(function()
 									local holdingSword = handItem and handItem.Value == sword.tool
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if actualRoot and holdingSword and targetAlive and swingReady and not isFuryPotionInUse() then
-										-- Swing gap comes from the Attack attempts slider (hits per 10 seconds).
-										local weaponInterval = 10 / math.max(AttackRate.Value, 1)
+										-- Never swing faster than the sword's own cooldown, or the server rate limits the hits.
+										-- The Attack attempts slider can only slow swings down from that limit.
+										local swordInterval = tonumber(meta.sword.attackSpeed) or 0.3
+										local weaponInterval = math.max(10 / math.max(AttackRate.Value, 1), swordInterval)
 										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), 0.03)
-										-- Schedule once per swing. If on time, count from the planned time so
-										-- loop jitter does not slow the rate. If late, restart from now.
+										-- Schedule once per swing, counting from the real send time.
 										if not swingScheduled then
 											swingScheduled = true
-											if now - nextAttack > 0.02 then
-												nextAttack = now + attackInterval
-											else
-												nextAttack = nextAttack + attackInterval
-											end
+											nextAttack = now + attackInterval + 0.002
 										end
 										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
