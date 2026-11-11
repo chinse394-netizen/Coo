@@ -5592,7 +5592,7 @@ run(function()
 		return {period = mean, last = flips[count]}
 	end
 
-	local function simulatePath(ent, profile, velocity, now, playerGravity, reactionFactor)
+	local function simulatePath(ent, profile, velocity, now, playerGravity, reactionFactor, stableHorizontal)
 		local hip = ent.HipHeight or 3
 		local pos = ent.RootPart.Position
 		local hVel = flatten(velocity)
@@ -5603,7 +5603,9 @@ run(function()
 		end
 
 		local hop = profile and LearnMoves.Enabled and getHopPattern(profile, now) or nil
-		local strafe = profile and LearnMoves.Enabled and getStrafePattern(profile, now) or nil
+		-- For bows, current velocity is more reliable than forcing a learned
+		-- strafe flip; the latter can predict the wrong side immediately after a juke.
+		local strafe = not stableHorizontal and profile and LearnMoves.Enabled and getStrafePattern(profile, now) or nil
 		local towerRootY
 		local virtual = false
 		local jumpAt
@@ -5989,9 +5991,10 @@ run(function()
 
 						if plr.RootPart and plr.Player and not isTelepearl then
 							local profile = profiles[plr.Player]
+							local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
 							local reaction = (profile and LearnMoves.Enabled) and getReactionFactor(profile, now) or 1
 							local ratio = 1
-							if profile and LearnMoves.Enabled and JukeGuard.Enabled and reaction == 1 and not getStrafePattern(profile, now) then
+							if profile and LearnMoves.Enabled and JukeGuard.Enabled and not isArrow and reaction == 1 and not getStrafePattern(profile, now) then
 								local flightGuess = ((plr.RootPart.Position - offsetpos).Magnitude / projSpeed) + lead
 								ratio = getLearnedRatio(profile, flightGuess, flatten(velocity).Magnitude)
 							end
@@ -6001,7 +6004,7 @@ run(function()
 			if cached and now - cached.t < 0.016 then
 								path = cached.path
 							else
-								local success, result = pcall(simulatePath, plr, profile, simVelocity, now, playerGravity, reaction)
+								local success, result = pcall(simulatePath, plr, profile, simVelocity, now, playerGravity, reaction, isArrow)
 								if success then
 									path = result
 									simCache[plr] = {t = now, path = result}
