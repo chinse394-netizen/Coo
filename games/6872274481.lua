@@ -24483,6 +24483,10 @@ run(function()
 				end
 
 				local nextAttack = 0
+				-- Hard floor for the gap between hit events, in seconds. No slider or margin
+				-- setting can send faster than this, so saved settings cannot spam the server.
+				-- 0.282 plus the 0.004 jitter gap is about 35 events per 10 seconds.
+				local MIN_SEND_GAP = 0.282
 				local lastSendTime = 0
 				local pauseWhy = {}
 				-- Counts why swings were skipped, only while Swing log is on.
@@ -24568,7 +24572,7 @@ run(function()
 										if CapToCooldown.Enabled then
 											weaponInterval = math.max(weaponInterval, tonumber(meta.sword.attackSpeed) or 0.3)
 										end
-										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), 0.03)
+										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), MIN_SEND_GAP)
 										-- Small extra gap so network jitter does not bunch two hits together.
 										nextAttack = now + attackInterval + 0.004
 										if not Swing.Enabled and not LegitAura.Enabled then
