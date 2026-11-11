@@ -25069,7 +25069,7 @@ run(function()
 		Name = 'Min send gap',
 		Min = 250,
 		Max = 330,
-		Default = 285.7,
+		Default = 278,
 		Decimal = 10,
 		Suffix = 'ms',
 		Tooltip = 'Shortest time between hit events. No other setting can go below it.\n285.7 is 35 hits per 10s. Lower is faster, but too low and the server ignores hits.'
@@ -25078,14 +25078,14 @@ run(function()
 		Name = 'Extra sends',
 		Min = 0,
 		Max = 3,
-		Default = 1,
-		Tooltip = 'Resends each hit a moment later to fill small gaps.\n0 is off. 1 sends about 70 events per 10s. More can get you rate limited.'
+		Default = 2,
+		Tooltip = 'Resends each hit a moment later to fill small gaps.\n0 is off. 2 sends about 105 events per 10s. More can get you rate limited.'
 	})
 	ResendGap = Killaura:CreateSlider({
 		Name = 'Resend gap',
 		Min = 10,
 		Max = 120,
-		Default = 45,
+		Default = 12,
 		Suffix = 'ms',
 		Tooltip = 'Time after the first send before each extra send.'
 	})
