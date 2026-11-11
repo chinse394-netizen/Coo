@@ -24652,7 +24652,7 @@ run(function()
 											weaponInterval = math.max(weaponInterval, tonumber(meta.sword.attackSpeed) or 0.3)
 										end
 										-- Probe mode: an event every few ms near the server edge, with hard limits
-										-- so the server rate limit can never be reached (max 16 events per second).
+										-- so the server rate limit can never be reached (about 22 events per second at most).
 										lockTo(v.Character)
 										local probe = math.max(ProbeStep.Value, 40) / 1000
 										-- Right at the server edge, probe every 5ms for 3 sends so the hit
@@ -24670,8 +24670,9 @@ run(function()
 											table.remove(sendTimes, 1)
 										end
 										table.insert(sendTimes, now)
-										if #sendTimes >= 16 then
-											probe = math.max(probe, (sendTimes[1] + 1) - now)
+										if #sendTimes >= 22 then
+											-- Over budget: slow down a little, never stop.
+											probe = math.max(probe, 0.06)
 										end
 										nextAttack = now + probe
 										local attackInterval = probe
