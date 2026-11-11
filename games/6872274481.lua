@@ -5968,6 +5968,22 @@ run(function()
 						local scale = VelocityPrediction.Value / 100
 						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
 		local profileSamples = plr.Player and profiles[plr.Player] and profiles[plr.Player].samples
+		local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
+		if isArrow and profileSamples and #profileSamples >= 3 then
+			-- A short position window is less noisy than a single replicated
+			-- AssemblyLinearVelocity sample when the target is strafing.
+			local newest = profileSamples[#profileSamples]
+			local window = profileSamples[math.max(1, #profileSamples - 2)]
+			local elapsed = newest.t - window.t
+			if elapsed >= 0.04 and elapsed <= 0.25 then
+				local measured = (newest.p - window.p) / elapsed
+				velocity = Vector3.new(
+					velocity.X * 0.35 + measured.X * 0.65,
+					velocity.Y * 0.5 + measured.Y * 0.5,
+					velocity.Z * 0.35 + measured.Z * 0.65
+				)
+			end
+		end
 		if profileSamples and #profileSamples >= 3 and os.clock() - profileSamples[#profileSamples].t < 0.12 then
 			local newest = profileSamples[#profileSamples]
 			local previous = profileSamples[#profileSamples - 1]
@@ -5991,7 +6007,6 @@ run(function()
 
 						if plr.RootPart and plr.Player and not isTelepearl then
 							local profile = profiles[plr.Player]
-							local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
 							local reaction = (profile and LearnMoves.Enabled) and getReactionFactor(profile, now) or 1
 							local ratio = 1
 							if profile and LearnMoves.Enabled and JukeGuard.Enabled and not isArrow and reaction == 1 and not getStrafePattern(profile, now) then
