@@ -5750,7 +5750,7 @@ run(function()
 			local f = evaluate(t)
 			if previousF and previousF * f <= 0 then
 				local low, high, lowF = previousT, t, previousF
-				for _ = 1, 10 do
+				for _ = 1, 14 do
 					local mid = (low + high) / 2
 					local midF = evaluate(mid)
 					if lowF * midF <= 0 then
@@ -5768,7 +5768,7 @@ run(function()
 			end
 			previousF = f
 			previousT = t
-			t += 0.01
+			t += 0.005
 		end
 		return arcs
 	end
