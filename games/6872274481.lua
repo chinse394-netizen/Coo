@@ -24343,6 +24343,8 @@ run(function()
 	local SwingLog
 	local CapToCooldown
 	local SendGap
+	local ExtraSends
+	local ResendGap
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local swordEffectFunction, swordEffectController
@@ -24653,6 +24655,50 @@ run(function()
 										if sent then
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
 											store.attackReachUpdate = tick() + 1
+											-- Extra resends fill the little gaps when a send lands just before the
+											-- server cooldown ends. If the first one counted, the server just ignores them.
+											local weaponTool = sword.tool
+											local resendTarget = v
+											local resendRoot = actualRoot
+											for resendIndex = 1, math.floor(ExtraSends.Value) do
+												task.delay(resendIndex * ResendGap.Value / 1000, function()
+													if not Killaura.Enabled or not entitylib.isAlive then
+														return
+													end
+													if not (resendTarget.Character and resendTarget.Character.Parent and entitylib.isVulnerable(resendTarget)) then
+														return
+													end
+													local handNow = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
+													if not (handNow and handNow.Value == weaponTool) then
+														return
+													end
+													local myRoot = entitylib.character and entitylib.character.RootPart
+													if not myRoot then
+														return
+													end
+													local resendSelf = myRoot.Position
+													local resendPosition = resendRoot.Position
+													if (resendPosition - resendSelf).Magnitude > serverRange then
+														return
+													end
+													local resendDirection = CFrame.lookAt(resendSelf, resendPosition).LookVector
+													pcall(function()
+														AttackRemote:FireServer({
+															weapon = weaponTool,
+															chargedAttack = {chargeRatio = 0},
+															entityInstance = resendTarget.Character,
+															validate = {
+																raycast = {
+																	cameraPosition = {value = resendSelf},
+																	cursorDirection = {value = resendDirection}
+																},
+																targetPosition = {value = resendPosition},
+																selfPosition = {value = resendSelf}
+															}
+														})
+													end)
+												end)
+											end
 											if SwingLog.Enabled then
 												local gap = now - lastSendTime
 												logStats.sends += 1
@@ -25027,6 +25073,21 @@ run(function()
 		Decimal = 10,
 		Suffix = 'ms',
 		Tooltip = 'Shortest time between hit events. No other setting can go below it.\n285.7 is 35 hits per 10s. Lower is faster, but too low and the server ignores hits.'
+	})
+	ExtraSends = Killaura:CreateSlider({
+		Name = 'Extra sends',
+		Min = 0,
+		Max = 3,
+		Default = 1,
+		Tooltip = 'Resends each hit a moment later to fill small gaps.\n0 is off. 1 sends about 70 events per 10s. More can get you rate limited.'
+	})
+	ResendGap = Killaura:CreateSlider({
+		Name = 'Resend gap',
+		Min = 10,
+		Max = 120,
+		Default = 45,
+		Suffix = 'ms',
+		Tooltip = 'Time after the first send before each extra send.'
 	})
 
 	task.defer(function()
