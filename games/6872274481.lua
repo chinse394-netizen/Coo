@@ -5592,7 +5592,7 @@ run(function()
 		return {period = mean, last = flips[count]}
 	end
 
-	local function simulatePath(ent, profile, velocity, now, playerGravity, reactionFactor, stableHorizontal)
+	local function simulatePath(ent, profile, velocity, now, playerGravity, reactionFactor)
 		local hip = ent.HipHeight or 3
 		local pos = ent.RootPart.Position
 		local hVel = flatten(velocity)
@@ -5603,9 +5603,7 @@ run(function()
 		end
 
 		local hop = profile and LearnMoves.Enabled and getHopPattern(profile, now) or nil
-		-- For bows, current velocity is more reliable than forcing a learned
-		-- strafe flip; the latter can predict the wrong side immediately after a juke.
-		local strafe = not stableHorizontal and profile and LearnMoves.Enabled and getStrafePattern(profile, now) or nil
+		local strafe = profile and LearnMoves.Enabled and getStrafePattern(profile, now) or nil
 		local towerRootY
 		local virtual = false
 		local jumpAt
@@ -5752,7 +5750,7 @@ run(function()
 			local f = evaluate(t)
 			if previousF and previousF * f <= 0 then
 				local low, high, lowF = previousT, t, previousF
-				for _ = 1, 14 do
+				for _ = 1, 10 do
 					local mid = (low + high) / 2
 					local midF = evaluate(mid)
 					if lowF * midF <= 0 then
@@ -5770,9 +5768,7 @@ run(function()
 			end
 			previousF = f
 			previousT = t
-			-- Use a 5 ms scan increment so fast targets and shallow arcs are not
-			-- skipped between samples.
-			t += 0.005
+			t += 0.01
 		end
 		return arcs
 	end
@@ -5795,16 +5791,9 @@ run(function()
 			Vector3.new(0, 1.5, 0),
 			side,
 			-side,
-			side * 2,
-			-side * 2,
-			side * 3,
-			-side * 3,
 			Vector3.new(0, -1.6, 0),
 			side + Vector3.new(0, 1.2, 0),
-			-side + Vector3.new(0, 1.2, 0),
-			side * 2 + Vector3.new(0, 2.5, 0),
-			-side * 2 + Vector3.new(0, 2.5, 0),
-			Vector3.new(0, 2.8, 0)
+			-side + Vector3.new(0, 1.2, 0)
 		}
 
 		local allArcs = {}
@@ -5911,14 +5900,12 @@ run(function()
 							return old(...)
 						end
 
-						local projectileName = string.lower(tostring(projmeta.projectile or ''))
-						local isBowProjectile = projectileName:find('arrow', 1, true) ~= nil or projectileName:find('crossbow', 1, true) ~= nil or projectileName:find('bow', 1, true) ~= nil
-						if (not OtherProjectiles.Enabled) and not isBowProjectile then
+						if (not OtherProjectiles.Enabled) and not projmeta.projectile:find('arrow') then
 							return old(...)
 						end
 
 						local targetPart = plr[TargetPart.Value]
-						if isBowProjectile and plr.Character then
+						if projmeta.projectile:find('arrow', 1, true) and plr.Character then
 							targetPart = plr.Character:FindFirstChild('UpperTorso') or plr.Character:FindFirstChild('Torso') or targetPart
 						end
 						local meta = projmeta:getProjectileMeta()
@@ -5970,22 +5957,7 @@ run(function()
 						local scale = VelocityPrediction.Value / 100
 						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
 		local profileSamples = plr.Player and profiles[plr.Player] and profiles[plr.Player].samples
-		local isArrow = isBowProjectile
-		if isArrow and profileSamples and #profileSamples >= 3 then
-			-- A short position window is less noisy than a single replicated
-			-- AssemblyLinearVelocity sample when the target is strafing.
-			local newest = profileSamples[#profileSamples]
-			local window = profileSamples[math.max(1, #profileSamples - 2)]
-			local elapsed = newest.t - window.t
-			if elapsed >= 0.04 and elapsed <= 0.25 then
-				local measured = (newest.p - window.p) / elapsed
-				velocity = Vector3.new(
-					velocity.X * 0.35 + measured.X * 0.65,
-					velocity.Y * 0.5 + measured.Y * 0.5,
-					velocity.Z * 0.35 + measured.Z * 0.65
-				)
-			end
-		end
+		local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
 		if profileSamples and #profileSamples >= 3 and os.clock() - profileSamples[#profileSamples].t < 0.12 then
 			local newest = profileSamples[#profileSamples]
 			local previous = profileSamples[#profileSamples - 1]
@@ -5994,9 +5966,7 @@ run(function()
 			local dtOld = math.max(previous.t - older.t, 0.01)
 			local acceleration = ((newest.v - previous.v) / dtNew + (previous.v - older.v) / dtOld) * 0.5
 			acceleration = Vector3.new(math.clamp(acceleration.X, -120, 120), math.clamp(acceleration.Y, -80, 80), math.clamp(acceleration.Z, -120, 120))
-			-- Use acceleration as a small correction only; large corrections amplify
-			-- replication noise and make shots miss when a target changes direction.
-			velocity += acceleration * math.clamp(getLeadTime() * 0.5, 0, 0.12)
+			velocity += acceleration * math.clamp(getLeadTime(), 0, 0.25)
 		end
 						if isTelepearl then
 							velocity = Vector3.zero
@@ -6007,7 +5977,7 @@ run(function()
 						local lead = isTelepearl and 0 or getLeadTime()
 						local direction
 
-						if plr.RootPart and plr.Player and not isTelepearl and not isArrow then
+						if plr.RootPart and plr.Player and not isTelepearl then
 							local profile = profiles[plr.Player]
 							local reaction = (profile and LearnMoves.Enabled) and getReactionFactor(profile, now) or 1
 							local ratio = 1
@@ -6018,10 +5988,10 @@ run(function()
 							local simVelocity = Vector3.new(velocity.X * ratio, velocity.Y, velocity.Z * ratio)
 							local cached = simCache[plr]
 							local path
-			if cached and now - cached.t < 0.016 then
+			if cached and now - cached.t < 0.04 then
 								path = cached.path
 							else
-								local success, result = pcall(simulatePath, plr, profile, simVelocity, now, playerGravity, reaction, isArrow)
+								local success, result = pcall(simulatePath, plr, profile, simVelocity, now, playerGravity, reaction)
 								if success then
 									path = result
 									simCache[plr] = {t = now, path = result}
@@ -6042,20 +6012,13 @@ run(function()
 						end
 
 						if not direction then
-						local targetPosition = targetPart.Position
-							if isBowProjectile then
+							local targetPosition = targetPart.Position
+							if projmeta.projectile:find('arrow', 1, true) then
 								targetPosition += Vector3.new(0, math.clamp((plr.HipHeight or 2) * 0.3, 0.35, 0.9), 0)
 							end
 							local leadPosition = targetPosition + velocity * lead
-							-- Re-solve using the estimated flight time so moving targets are
-							-- intercepted instead of receiving a single-distance lead guess.
-							for _ = 1, isArrow and 3 or 1 do
-								local libraryAim = prediction.SolveTrajectory(offsetpos, projSpeed, gravity, leadPosition, velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
-								if not libraryAim then break end
-								direction = (libraryAim - offsetpos).Unit
-								local flight = (libraryAim - offsetpos).Magnitude / projSpeed
-								leadPosition = targetPosition + velocity * (lead + flight)
-							end
+							local libraryAim = prediction.SolveTrajectory(offsetpos, projSpeed, gravity, leadPosition, velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
+							direction = libraryAim and (libraryAim - offsetpos).Unit
 						end
 
 						if direction then
