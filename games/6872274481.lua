@@ -5793,9 +5793,16 @@ run(function()
 			Vector3.new(0, 1.5, 0),
 			side,
 			-side,
+			side * 2,
+			-side * 2,
+			side * 3,
+			-side * 3,
 			Vector3.new(0, -1.6, 0),
 			side + Vector3.new(0, 1.2, 0),
-			-side + Vector3.new(0, 1.2, 0)
+			-side + Vector3.new(0, 1.2, 0),
+			side * 2 + Vector3.new(0, 2.5, 0),
+			-side * 2 + Vector3.new(0, 2.5, 0),
+			Vector3.new(0, 2.8, 0)
 		}
 
 		local allArcs = {}
