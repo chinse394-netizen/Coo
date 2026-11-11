@@ -24485,8 +24485,8 @@ run(function()
 				local nextAttack = 0
 				-- Hard floor for the gap between hit events, in seconds. No slider or margin
 				-- setting can send faster than this, so saved settings cannot spam the server.
-				-- 0.282 plus the 0.004 jitter gap is about 35 events per 10 seconds.
-				local MIN_SEND_GAP = 0.282
+				-- 0.2857 is 35 events per 10 seconds.
+				local MIN_SEND_GAP = 0.2857
 				local lastSendTime = 0
 				local pauseWhy = {}
 				-- Counts why swings were skipped, only while Swing log is on.
@@ -24573,8 +24573,13 @@ run(function()
 											weaponInterval = math.max(weaponInterval, tonumber(meta.sword.attackSpeed) or 0.3)
 										end
 										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), MIN_SEND_GAP)
-										-- Small extra gap so network jitter does not bunch two hits together.
-										nextAttack = now + attackInterval + 0.004
+										-- Count from the planned time, so a late frame does not stretch the gap
+										-- and the rate stays steady. After a big hitch (50ms+), restart from now.
+										if now - nextAttack > 0.05 then
+											nextAttack = now + attackInterval
+										else
+											nextAttack = nextAttack + attackInterval
+										end
 										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
 											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
