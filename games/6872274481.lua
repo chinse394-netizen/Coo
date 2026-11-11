@@ -24578,6 +24578,9 @@ run(function()
 										local sent = pcall(function()
 											local currentPosition = actualRoot.Position
 											local currentDirection = CFrame.lookAt(selfpos, currentPosition).LookVector
+											-- Keep the local sword controller's attack timestamp in sync
+											-- with the remote request for faster client hit registration.
+											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
 											AttackRemote:FireServer({
 												weapon = sword.tool,
 												chargedAttack = {chargeRatio = 0},
