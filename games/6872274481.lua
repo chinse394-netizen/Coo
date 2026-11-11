@@ -24342,6 +24342,7 @@ run(function()
 	local LegitAura
 	local SwingLog
 	local CapToCooldown
+	local SendGap
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local swordEffectFunction, swordEffectController
@@ -24491,10 +24492,6 @@ run(function()
 				end
 
 				local nextAttack = 0
-				-- Hard floor for the gap between hit events, in seconds. No slider or margin
-				-- setting can send faster than this, so saved settings cannot spam the server.
-				-- 0.2857 is 35 events per 10 seconds. Going lower (0.283) dropped hits to about 30.
-				local MIN_SEND_GAP = 0.2857
 				local lastSendTime = 0
 				local pauseWhy = {}
 				-- Counts why swings were skipped, only while Swing log is on.
@@ -24614,7 +24611,7 @@ run(function()
 										if CapToCooldown.Enabled then
 											weaponInterval = math.max(weaponInterval, tonumber(meta.sword.attackSpeed) or 0.3)
 										end
-										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), MIN_SEND_GAP)
+										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), SendGap.Value / 1000)
 										-- Count from the planned time, so a late frame does not stretch the gap
 										-- and the rate stays steady. After a big hitch (50ms+), restart from now.
 										if now - nextAttack > 0.05 then
@@ -25021,6 +25018,15 @@ run(function()
 	CapToCooldown = Killaura:CreateToggle({
 		Name = 'Cap to sword cooldown',
 		Tooltip = 'On: never swing faster than the sword cooldown (about 0.3s).\nOff: swing gap comes only from the slider. Faster swings than the cooldown get ignored by the server.'
+	})
+	SendGap = Killaura:CreateSlider({
+		Name = 'Min send gap',
+		Min = 250,
+		Max = 330,
+		Default = 285.7,
+		Decimal = 10,
+		Suffix = 'ms',
+		Tooltip = 'Shortest time between hit events. No other setting can go below it.\n285.7 is 35 hits per 10s. Lower is faster, but too low and the server ignores hits.'
 	})
 
 	task.defer(function()
