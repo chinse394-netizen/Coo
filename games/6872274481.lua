@@ -12852,6 +12852,18 @@ run(function()
 	local Accessories, FreezeAnimations, Clouds, Lights, Water, Reflections, Nametags, Explosions, CompatibilityLighting, HitregBoost
 	local LowTextures, Highlights, Atmosphere
 	local RenderDistance, Distance
+	local MaxMode, PauseTabbed
+	local renderingPaused = false
+	-- Max FPS mode forces the heavy options on, even if their toggle is off.
+	local function on(toggle)
+		return toggle.Enabled or (MaxMode and MaxMode.Enabled)
+	end
+	local function getDistance()
+		if MaxMode and MaxMode.Enabled then
+			return math.min(Distance.Value, 150)
+		end
+		return Distance.Value
+	end
 	-- Render distance: positions are stored once in plain Lua arrays so the
 	-- distance check is pure math (very cheap). Roblox properties are only
 	-- written when a part flips between near and far.
@@ -12974,7 +12986,7 @@ run(function()
 		local isCharacter, isLocal = getCharacterInfo(object)
 		if isBasePart then
 			if isCharacter then
-				if Accessories.Enabled and not isLocal and object.Parent and object.Parent.ClassName == 'Accessory' then
+				if on(Accessories) and not isLocal and object.Parent and object.Parent.ClassName == 'Accessory' then
 					set(object, 'LocalTransparencyModifier', 1)
 				end
 				return
@@ -12982,7 +12994,7 @@ run(function()
 			-- (No per-part CastShadow: GlobalShadows off already kills shadows, and
 			-- saving it for every block was the main cause of the FPS drops.)
 			if Reflections.Enabled then set(object, 'Reflectance', 0) end
-			if RenderDistance.Enabled and object.Anchored then
+			if on(RenderDistance) and object.Anchored then
 				distCount += 1
 				distParts[distCount] = object
 				distPos[distCount] = object.Position
@@ -12994,15 +13006,15 @@ run(function()
 				set(object, 'Material', Enum.Material.SmoothPlastic)
 			end
 			if className == 'MeshPart' then
-				if WorldTextures.Enabled then set(object, 'TextureID', '') end
+				if on(WorldTextures) then set(object, 'TextureID', '') end
 				if MeshDetail.Enabled then set(object, 'RenderFidelity', Enum.RenderFidelity.Performance) end
 			end
 		elseif isOverlay then
-			if WorldTextures.Enabled and not isCharacter then set(object, 'Transparency', 1) end
+			if on(WorldTextures) and not isCharacter then set(object, 'Transparency', 1) end
 		elseif isBillboard then
 			if Nametags.Enabled and not isLocal then set(object, 'Enabled', false) end
 		elseif isHumanoid then
-			if FreezeAnimations.Enabled and isCharacter and not isLocal and not (HitregBoost.Enabled and killauraRunning()) then
+			if on(FreezeAnimations) and isCharacter and not isLocal and not (HitregBoost.Enabled and killauraRunning()) then
 				local animator = object:FindFirstChildOfClass('Animator')
 				if animator then
 					for _, track in animator:GetPlayingAnimationTracks() do
@@ -13063,7 +13075,7 @@ run(function()
 		if Reflections.Enabled then
 			set(lightingService, 'EnvironmentSpecularScale', 0)
 		end
-		if CompatibilityLighting.Enabled then
+		if on(CompatibilityLighting) then
 			set(lightingService, 'Technology', Enum.Technology.Compatibility)
 		end
 		for _, object in lightingService:GetChildren() do
@@ -13117,21 +13129,31 @@ run(function()
 	local DIST_INTERVAL = 0.05
 
 	local function updateDistance(now)
-		if not RenderDistance.Enabled or distCount == 0 then return end
+		if not on(RenderDistance) or distCount == 0 then return end
 		if now - lastDistanceCheck < DIST_INTERVAL then return end
 		lastDistanceCheck = now
 		local camera = workspace.CurrentCamera
 		if not camera then return end
 		local origin = camera.CFrame.Position
-		local maxDistance = Distance.Value
+		local maxDistance = getDistance()
 		for _ = 1, math.min(DIST_CHUNK, distCount) do
+			if distCount == 0 then break end
 			if distIndex > distCount then distIndex = 1 end
 			local i = distIndex
-			distIndex += 1
-			local far = (distPos[i] - origin).Magnitude > maxDistance
-			if far ~= (distHidden[i] == true) then
-				local part = distParts[i]
-				if part.Parent then
+			local part = distParts[i]
+			if not part.Parent then
+				-- Broken block: swap the last entry into this slot and shrink the list.
+				distParts[i] = distParts[distCount]
+				distPos[i] = distPos[distCount]
+				distHidden[i] = distHidden[distCount]
+				distParts[distCount] = nil
+				distPos[distCount] = nil
+				distHidden[distCount] = nil
+				distCount -= 1
+			else
+				distIndex += 1
+				local far = (distPos[i] - origin).Magnitude > maxDistance
+				if far ~= (distHidden[i] == true) then
 					distHidden[i] = far or nil
 					setHidden(part, far)
 				end
@@ -13166,6 +13188,16 @@ run(function()
 			pcall(setfpscap, oldFpsCap)
 			oldFpsCap = nil
 		end
+	end
+
+	-- Stops drawing the 3D world while Roblox is not the focused window.
+	-- The game keeps running; only the drawing stops, so the PC stays cool.
+	local function setRenderingPaused(paused)
+		if paused == renderingPaused then return end
+		renderingPaused = paused
+		pcall(function()
+			runService:Set3dRenderingEnabled(not paused)
+		end)
 	end
 
 	-- Toggle changes: undo everything, then redo with the new settings (batched, once per frame max).
@@ -13226,6 +13258,15 @@ run(function()
 				FPSBoost:Clean(workspace.DescendantAdded:Connect(queueObject))
 				FPSBoost:Clean(lightingService.ChildAdded:Connect(processLighting))
 
+				FPSBoost:Clean(inputService.WindowFocusReleased:Connect(function()
+					if PauseTabbed.Enabled then
+						setRenderingPaused(true)
+					end
+				end))
+				FPSBoost:Clean(inputService.WindowFocused:Connect(function()
+					setRenderingPaused(false)
+				end))
+
 				applyGlobal()
 				rescan()
 
@@ -13271,6 +13312,7 @@ run(function()
 				table.clear(queue)
 				queueHead, queueTail = 1, 0
 				reapplyPending = false
+				setRenderingPaused(false)
 				clearDistance()
 				restoreAll()
 				applyFpsCap()
@@ -13310,6 +13352,20 @@ run(function()
 			if FPSBoost.Enabled then applyFpsCap() end
 		end
 	})
+	MaxMode = FPSBoost:CreateToggle({
+		Name = 'Max FPS mode',
+		Function = reapply,
+		Default = false,
+		Tooltip = 'Turns on every heavy option: no textures, simple lighting, frozen animations, no accessories, view distance 150. Map looks plain.'
+	})
+	PauseTabbed = FPSBoost:CreateToggle({
+		Name = 'Pause when tabbed out',
+		Function = function(enabled)
+			if not enabled then setRenderingPaused(false) end
+		end,
+		Default = true,
+		Tooltip = 'Stops drawing the 3D world while Roblox is not your active window.'
+	})
 	HitregBoost = FPSBoost:CreateToggle({
 		Name = 'Hitreg Boost',
 		Default = true,
@@ -13340,7 +13396,7 @@ run(function()
 	Shadows = FPSBoost:CreateToggle({Name = 'Reduce shadows', Function = reapply, Default = true, Tooltip = 'Turns off global shadows and map part shadows.'})
 	MeshDetail = FPSBoost:CreateToggle({Name = 'Render quality', Function = reapply, Default = true, Tooltip = 'Lowest render quality, no grass, low-detail meshes.'})
 	RenderDistance = FPSBoost:CreateToggle({Name = 'Render distance', Function = reapply, Default = true, Tooltip = 'Hides map parts that are far from your camera. Biggest FPS boost. Players are never hidden.'})
-	Distance = FPSBoost:CreateSlider({Name = 'Distance', Min = 100, Max = 1500, Default = 350, Tooltip = 'How far you can see map parts (studs). Lower = more FPS.'})
+	Distance = FPSBoost:CreateSlider({Name = 'Distance', Min = 50, Max = 1500, Default = 350, Tooltip = 'How far you can see map parts (studs). Lower = more FPS.'})
 	LowTextures = FPSBoost:CreateToggle({Name = 'Low-res textures', Function = reapply, Default = true, Tooltip = 'Keeps textures but makes them lower quality. Map still looks normal.'})
 	Highlights = FPSBoost:CreateToggle({Name = 'Highlights', Function = reapply, Default = true, Tooltip = 'Turns off Highlight glows (very heavy to draw).'})
 	Atmosphere = FPSBoost:CreateToggle({Name = 'Atmosphere', Function = reapply, Default = true, Tooltip = 'Removes fog haze and glare.'})
