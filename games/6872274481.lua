@@ -24500,6 +24500,8 @@ run(function()
 				-- Hit lock: watch the target's health so the next send is timed from the
 				-- last hit the server really counted, instead of a free running clock.
 				local acceptedAt = 0
+				local lastSwingFx = 0
+				local sendTimes = {}
 				local lockedChar = nil
 				local lockedHealth = nil
 				local lockedConnection = nil
@@ -24647,22 +24649,27 @@ run(function()
 										if CapToCooldown.Enabled then
 											weaponInterval = math.max(weaponInterval, tonumber(meta.sword.attackSpeed) or 0.3)
 										end
-										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), SendGap.Value / 1000)
-										-- Hit lock is active while hits keep showing up as health drops.
+										-- Probe mode: an event every few ms near the server edge, with hard limits
+										-- so the server rate limit can never be reached (max 22 events per second).
 										lockTo(v.Character)
-										local locked = LockToHits.Enabled and (tick() - acceptedAt) < 1
-										if locked then
-											-- Keep probing every few ms until the server counts one.
-											-- The health watcher moves nextAttack once a hit is counted.
-											nextAttack = now + (ProbeStep.Value / 1000)
-										elseif now - nextAttack > 0.05 then
-											-- Count from the planned time, so a late frame does not stretch the gap
-											-- and the rate stays steady. After a big hitch (50ms+), restart from now.
-											nextAttack = now + attackInterval
-										else
-											nextAttack = nextAttack + attackInterval
+										local probe = math.max(ProbeStep.Value, 40) / 1000
+										local cutoff = now - 1
+										while sendTimes[1] and sendTimes[1] < cutoff do
+											table.remove(sendTimes, 1)
 										end
-										if not Swing.Enabled and not LegitAura.Enabled then
+										table.insert(sendTimes, now)
+										if #sendTimes >= 22 then
+											probe = math.max(probe, (sendTimes[1] + 1) - now)
+										end
+										nextAttack = now + probe
+										local attackInterval = probe
+										-- Events go out often, but the swing animation only plays once per
+										-- cooldown, so there are no swings that the server ignored.
+										local playSwing = (now - lastSwingFx) >= 0.26
+										if playSwing then
+											lastSwingFx = now
+										end
+										if playSwing and not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
 											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
 												bedwars.ScytheController:playLocalAnimation()
@@ -25148,9 +25155,9 @@ run(function()
 		Name = 'Probe step',
 		Min = 4,
 		Max = 40,
-		Default = 10,
+		Default = 45,
 		Suffix = 'ms',
-		Tooltip = 'Time between probe sends in hit lock. Lower is more exact but sends more events.'
+		Tooltip = 'Time between sends. Never goes under 40. About 22 events per second at most.'
 	})
 
 	task.defer(function()
