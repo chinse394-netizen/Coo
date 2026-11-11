@@ -24512,10 +24512,6 @@ run(function()
 									end
 								end
 								local selfpos = root.Position
-								-- One swing timer for the whole pass, so every target in range
-								-- is hit on the same swing instead of one target per interval.
-								local swingReady = tick() >= nextAttack
-								local swingScheduled = false
 
 								for _, v in plrs do
 									if not Killaura.Enabled then break end
@@ -24543,24 +24539,16 @@ run(function()
 									local now = tick()
 									local holdingSword = handItem and handItem.Value == sword.tool
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
-									if actualRoot and holdingSword and targetAlive and swingReady and not isFuryPotionInUse() then
-										-- Swing gap comes from the Attack attempts slider (hits per 10 seconds).
-										-- 35 gives 0.2857 seconds. The sword cooldown is not used as a limit.
-										local weaponInterval = 10 / math.max(AttackRate.Value, 1)
+									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
+										-- One hit event per swing, like the real game. Never swing faster than the
+										-- sword's own cooldown, or the server rate limits the hits.
+										-- The Attack attempts slider can only slow swings down from that limit.
+										local swordInterval = tonumber(meta.sword.attackSpeed) or 0.3
+										local weaponInterval = math.max(10 / math.max(AttackRate.Value, 1), swordInterval)
 										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), 0.03)
-										-- Only the first target of a swing plays the swing effect.
-										local firstOfSwing = not swingScheduled
-										-- Schedule once per swing. If on time, count from the planned time so
-										-- loop jitter does not slow the rate. If late, restart from now.
-										if not swingScheduled then
-											swingScheduled = true
-											if now - nextAttack > 0.02 then
-												nextAttack = now + attackInterval
-											else
-												nextAttack = nextAttack + attackInterval
-											end
-										end
-										if firstOfSwing and not Swing.Enabled and not LegitAura.Enabled then
+										-- Small extra gap so network jitter does not bunch two hits together.
+										nextAttack = now + attackInterval + 0.004
+										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
 											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
 												bedwars.ScytheController:playLocalAnimation()
