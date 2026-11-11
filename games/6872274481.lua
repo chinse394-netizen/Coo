@@ -5911,12 +5911,14 @@ run(function()
 							return old(...)
 						end
 
-						if (not OtherProjectiles.Enabled) and not projmeta.projectile:find('arrow') then
+						local projectileName = string.lower(tostring(projmeta.projectile or ''))
+						local isBowProjectile = projectileName:find('arrow', 1, true) ~= nil or projectileName:find('crossbow', 1, true) ~= nil or projectileName:find('bow', 1, true) ~= nil
+						if (not OtherProjectiles.Enabled) and not isBowProjectile then
 							return old(...)
 						end
 
 						local targetPart = plr[TargetPart.Value]
-						if projmeta.projectile:find('arrow', 1, true) and plr.Character then
+						if isBowProjectile and plr.Character then
 							targetPart = plr.Character:FindFirstChild('UpperTorso') or plr.Character:FindFirstChild('Torso') or targetPart
 						end
 						local meta = projmeta:getProjectileMeta()
@@ -5968,7 +5970,7 @@ run(function()
 						local scale = VelocityPrediction.Value / 100
 						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
 		local profileSamples = plr.Player and profiles[plr.Player] and profiles[plr.Player].samples
-		local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
+		local isArrow = isBowProjectile
 		if isArrow and profileSamples and #profileSamples >= 3 then
 			-- A short position window is less noisy than a single replicated
 			-- AssemblyLinearVelocity sample when the target is strafing.
@@ -6041,7 +6043,7 @@ run(function()
 
 						if not direction then
 						local targetPosition = targetPart.Position
-							if projmeta.projectile:find('arrow', 1, true) then
+							if isBowProjectile then
 								targetPosition += Vector3.new(0, math.clamp((plr.HipHeight or 2) * 0.3, 0.35, 0.9), 0)
 							end
 							local leadPosition = targetPosition + velocity * lead
