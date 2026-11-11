@@ -24663,7 +24663,7 @@ run(function()
 													logStats.gapSum += gap
 													logStats.maxGap = math.max(logStats.maxGap, gap)
 												end
-												if lastSendTime > 0 and gap > attackInterval + 0.05 then
+												if lastSendTime > 0 and gap > attackInterval + 0.015 then
 													local reasons = {}
 													for name, count in pauseWhy do
 														table.insert(reasons, name .. '=' .. count)
@@ -24679,6 +24679,12 @@ run(function()
 										else
 											-- Do not wait out a full attack interval after a failed remote.
 											nextAttack = now + (1 / math.clamp(UpdateRate.Value, 60, 120))
+										end
+									elseif now >= nextAttack then
+										if not holdingSword then
+											noteReason('notHoldingSword')
+										elseif not targetAlive then
+											noteReason('targetNotVulnerable')
 										end
 									end
 								end
