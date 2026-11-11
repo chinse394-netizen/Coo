@@ -12881,6 +12881,13 @@ run(function()
 	local function getProp(object, prop) return object[prop] end
 	local function setProp(object, prop, value) object[prop] = value end
 
+	local function killauraRunning()
+		for _, module in vape.Modules do
+			if module.Name == 'KillauraV2' then return module.Enabled end
+		end
+		return false
+	end
+
 	local function set(object, prop, value)
 		local ok, old = pcall(getProp, object, prop)
 		if not ok or old == nil or old == value then return end -- already fine: nothing to save
@@ -12994,7 +13001,7 @@ run(function()
 		elseif isBillboard then
 			if Nametags.Enabled and not isLocal then set(object, 'Enabled', false) end
 		elseif isHumanoid then
-			if FreezeAnimations.Enabled and isCharacter and not isLocal then
+			if FreezeAnimations.Enabled and isCharacter and not isLocal and not (HitregBoost.Enabled and killauraRunning()) then
 				local animator = object:FindFirstChildOfClass('Animator')
 				if animator then
 					for _, track in animator:GetPlayingAnimationTracks() do
@@ -13160,13 +13167,6 @@ run(function()
 		end
 	end
 
-	local function killauraRunning()
-		for _, module in vape.Modules do
-			if module.Name == 'KillauraV2' then return module.Enabled end
-		end
-		return false
-	end
-
 	-- Toggle changes: undo everything, then redo with the new settings (batched, once per frame max).
 	local function reapply()
 		if not FPSBoost or not FPSBoost.Enabled or reapplyPending then return end
@@ -13204,9 +13204,8 @@ run(function()
 						frames, sampleStart = 0, now
 					end
 
-					if not (HitregBoost.Enabled and killauraRunning()) then
-						updateDistance(now)
-					end
+					if HitregBoost.Enabled and killauraRunning() then return end
+					updateDistance(now)
 					if queueHead > queueTail then return end
 					local workChunk = HitregBoost.Enabled and killauraRunning() and math.max(50, math.floor(CHUNK / 4)) or CHUNK
 					local stop = math.min(queueHead + workChunk - 1, queueTail)
