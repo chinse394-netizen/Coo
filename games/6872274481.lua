@@ -5284,7 +5284,6 @@ run(function()
 	local JukeGuard
 	local SmoothVel
 	local AccuracyLog
-	local LongRange
 	local lastAim
 	local shotStats = {hits = 0, total = 0}
 	local ProjectileAimbot
@@ -5320,10 +5319,7 @@ run(function()
 	local function getLeadTime()
 		local lead = 0
 		if PingComp.Enabled then
-			-- Other players show about half a ping plus the interpolation delay behind the server.
-			-- Your shot also needs half a ping to reach the server, so the target moves a full ping
-			-- plus the delay before the arrow starts. Half a ping was not enough for walking targets.
-			lead += getPingSeconds() + (InterpDelay.Value / 1000) - 0.03
+			lead += (getPingSeconds() / 2) + (InterpDelay.Value / 1000) - 0.045
 		end
 		if FPSComp.Enabled then
 			lead += frameTime
@@ -5967,14 +5963,8 @@ run(function()
 							end
 						end
 						local scale = VelocityPrediction.Value / 100
-						-- Long flights: players rarely keep one speed for a full second, so trust the
-						-- current speed a little less the longer the arrow is in the air.
-						if projmeta.projectile:find('arrow', 1, true) then
-							local flightGuess = (targetPart.Position - offsetpos).Magnitude / math.max(projSpeed, 1)
-							scale *= 1 - math.clamp((flightGuess - 0.5) * (LongRange.Value / 100), 0, 0.3)
-						end
 						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
-						local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
+		local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
 						if isTelepearl then
 							velocity = Vector3.zero
 						end
@@ -5995,7 +5985,7 @@ run(function()
 							local simVelocity = Vector3.new(velocity.X * ratio, velocity.Y, velocity.Z * ratio)
 							local cached = simCache[plr]
 							local path
-							if cached and now - cached.t < 0.04 then
+			if cached and now - cached.t < 0.04 then
 								path = cached.path
 							else
 								local success, result = pcall(simulatePath, plr, profile, simVelocity, now, playerGravity, reaction)
@@ -6090,14 +6080,6 @@ run(function()
 		Name = 'Smooth velocity',
 		Default = true,
 		Tooltip = 'Mixes the replicated speed with the speed seen on your screen.\nTurn off if shots get worse.'
-	})
-	LongRange = ProjectileAimbot:CreateSlider({
-		Name = 'Long range damping',
-		Min = 0,
-		Max = 100,
-		Default = 25,
-		Suffix = '%',
-		Tooltip = 'Trusts the target speed a bit less on long shots. Max 30 percent less.\n0 turns it off.'
 	})
 	AccuracyLog = ProjectileAimbot:CreateToggle({
 		Name = 'Accuracy log',
@@ -7077,19 +7059,13 @@ run(function()
 					Strings[ent] = '<font color="rgb(85, 255, 85)">[</font><font color="rgb(255, 255, 255)">%s</font><font color="rgb(85, 255, 85)">]</font> '..Strings[ent]
 				end
 	
-				if Equipment.Enabled and ent.Player and ent.Character then
+				if Equipment.Enabled and store.inventories[ent.Player] then
 					local kit = ent.Player:GetAttribute('PlayingAsKits')
-					-- Read the live values the game keeps on the character.
-					-- Slot 0 is the helmet, 1 the chestplate and 2 the boots.
-					local function equipped(valueName)
-						local value = ent.Character:FindFirstChild(valueName)
-						local item = value and value.Value
-						return {itemType = item and item.Name or ''}
-					end
-					nametag.Hand.Image = bedwars.getIcon(equipped('HandInvItem'), true)
-					nametag.Helmet.Image = bedwars.getIcon(equipped('ArmorInvItem_0'), true)
-					nametag.Chestplate.Image = bedwars.getIcon(equipped('ArmorInvItem_1'), true)
-					nametag.Boots.Image = bedwars.getIcon(equipped('ArmorInvItem_2'), true)
+					local inventory = store.inventories[ent.Player]
+					nametag.Hand.Image = bedwars.getIcon(inventory.hand or {itemType = ''}, true)
+					nametag.Helmet.Image = bedwars.getIcon(inventory.armor[4] or {itemType = ''}, true)
+					nametag.Chestplate.Image = bedwars.getIcon(inventory.armor[5] or {itemType = ''}, true)
+					nametag.Boots.Image = bedwars.getIcon(inventory.armor[6] or {itemType = ''}, true)
 					nametag.Kit.Image = kit and kit ~= 'none' and bedwars.BedwarsKitMeta[kit].renderImage or ''
 				end
 				
@@ -24366,12 +24342,6 @@ run(function()
 	local LegitAura
 	local SwingLog
 	local CapToCooldown
-	local SendGap
-	local ExtraSends
-	local LockToHits
-	local ProbeStep
-	local ServerCooldown
-	local ResendGap
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local swordEffectFunction, swordEffectController
@@ -24521,41 +24491,10 @@ run(function()
 				end
 
 				local nextAttack = 0
-				-- Hit lock: watch the target's health so the next send is timed from the
-				-- last hit the server really counted, instead of a free running clock.
-				local acceptedAt = 0
-				local lastSwingFx = 0
-				local denseProbes = 0
-				local sendTimes = {}
-				local lockedChar = nil
-				local lockedHealth = nil
-				local lockedConnection = nil
-				local function lockTo(character)
-					if character == lockedChar then
-						return
-					end
-					if lockedConnection then
-						lockedConnection:Disconnect()
-						lockedConnection = nil
-					end
-					lockedChar = character
-					lockedHealth = character and character:GetAttribute('Health')
-					if not character then
-						return
-					end
-					lockedConnection = character:GetAttributeChangedSignal('Health'):Connect(function()
-						local health = character:GetAttribute('Health')
-						if type(health) == 'number' and type(lockedHealth) == 'number' and health < lockedHealth then
-							acceptedAt = tick()
-							denseProbes = 1
-							-- The server counted the hit about one ping ago, and our next event needs one ping to arrive.
-							local ping = lplr:GetNetworkPing()
-							nextAttack = acceptedAt + (math.max(ServerCooldown.Value, 270) / 1000) - (ping * 2)
-						end
-						lockedHealth = health
-					end)
-					Killaura:Clean(lockedConnection)
-				end
+				-- Hard floor for the gap between hit events, in seconds. No slider or margin
+				-- setting can send faster than this, so saved settings cannot spam the server.
+				-- 0.2857 is 35 events per 10 seconds. Going lower (0.283) dropped hits to about 30.
+				local MIN_SEND_GAP = 0.2857
 				local lastSendTime = 0
 				local pauseWhy = {}
 				-- Counts why swings were skipped, only while Swing log is on.
@@ -24675,38 +24614,15 @@ run(function()
 										if CapToCooldown.Enabled then
 											weaponInterval = math.max(weaponInterval, tonumber(meta.sword.attackSpeed) or 0.3)
 										end
-										-- Probe mode: an event every few ms near the server edge, with hard limits
-										-- so the server rate limit can never be reached (about 22 events per second at most).
-										lockTo(v.Character)
-										local probe = math.max(ProbeStep.Value, 40) / 1000
-										-- Right at the server edge, probe every 7ms for 1 extra send (2 events per hit) so the hit
-										-- lands within a few ms of the cooldown ending.
-										if LockToHits.Enabled and (tick() - acceptedAt) < 1 then
-											if denseProbes > 0 then
-												denseProbes -= 1
-												probe = 0.007
-											else
-												probe = 0.04
-											end
+										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), MIN_SEND_GAP)
+										-- Count from the planned time, so a late frame does not stretch the gap
+										-- and the rate stays steady. After a big hitch (50ms+), restart from now.
+										if now - nextAttack > 0.05 then
+											nextAttack = now + attackInterval
+										else
+											nextAttack = nextAttack + attackInterval
 										end
-										local cutoff = now - 1
-										while sendTimes[1] and sendTimes[1] < cutoff do
-											table.remove(sendTimes, 1)
-										end
-										table.insert(sendTimes, now)
-										if #sendTimes >= 22 then
-											-- Over budget: slow down a little, never stop.
-											probe = math.max(probe, 0.06)
-										end
-										nextAttack = now + probe
-										local attackInterval = probe
-										-- Events go out often, but the swing animation only plays once per
-										-- cooldown, so there are no swings that the server ignored.
-										local playSwing = (now - lastSwingFx) >= 0.26
-										if playSwing then
-											lastSwingFx = now
-										end
-										if playSwing and not Swing.Enabled and not LegitAura.Enabled then
+										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
 											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
 												bedwars.ScytheController:playLocalAnimation()
@@ -24740,50 +24656,6 @@ run(function()
 										if sent then
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
 											store.attackReachUpdate = tick() + 1
-											-- Extra resends fill the little gaps when a send lands just before the
-											-- server cooldown ends. If the first one counted, the server just ignores them.
-											local weaponTool = sword.tool
-											local resendTarget = v
-											local resendRoot = actualRoot
-											for resendIndex = 1, math.floor(ExtraSends.Value) do
-												task.delay(resendIndex * ResendGap.Value / 1000, function()
-													if not Killaura.Enabled or not entitylib.isAlive then
-														return
-													end
-													if not (resendTarget.Character and resendTarget.Character.Parent and entitylib.isVulnerable(resendTarget)) then
-														return
-													end
-													local handNow = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
-													if not (handNow and handNow.Value == weaponTool) then
-														return
-													end
-													local myRoot = entitylib.character and entitylib.character.RootPart
-													if not myRoot then
-														return
-													end
-													local resendSelf = myRoot.Position
-													local resendPosition = resendRoot.Position
-													if (resendPosition - resendSelf).Magnitude > serverRange then
-														return
-													end
-													local resendDirection = CFrame.lookAt(resendSelf, resendPosition).LookVector
-													pcall(function()
-														AttackRemote:FireServer({
-															weapon = weaponTool,
-															chargedAttack = {chargeRatio = 0},
-															entityInstance = resendTarget.Character,
-															validate = {
-																raycast = {
-																	cameraPosition = {value = resendSelf},
-																	cursorDirection = {value = resendDirection}
-																},
-																targetPosition = {value = resendPosition},
-																selfPosition = {value = resendSelf}
-															}
-														})
-													end)
-												end)
-											end
 											if SwingLog.Enabled then
 												local gap = now - lastSendTime
 												logStats.sends += 1
@@ -25149,52 +25021,6 @@ run(function()
 	CapToCooldown = Killaura:CreateToggle({
 		Name = 'Cap to sword cooldown',
 		Tooltip = 'On: never swing faster than the sword cooldown (about 0.3s).\nOff: swing gap comes only from the slider. Faster swings than the cooldown get ignored by the server.'
-	})
-	SendGap = Killaura:CreateSlider({
-		Name = 'Min send gap',
-		Min = 0,
-		Max = 330,
-		Default = 285.7,
-		Decimal = 10,
-		Suffix = 'ms',
-		Tooltip = 'Shortest time between hit events. No other setting can go below it.\n285.7 is 35 hits per 10s. 30 is the old spam style, which gets rate limited (use attempts 600 and margin -8.7 for it). Too low and you get rate limited.'
-	})
-	ExtraSends = Killaura:CreateSlider({
-		Name = 'Extra sends',
-		Min = 0,
-		Max = 3,
-		Default = 0,
-		Tooltip = 'Resends each hit a moment later to fill small gaps.\n0 is off. 2 sends about 105 events per 10s. More can get you rate limited.'
-	})
-	ResendGap = Killaura:CreateSlider({
-		Name = 'Resend gap',
-		Min = 10,
-		Max = 120,
-		Default = 12,
-		Suffix = 'ms',
-		Tooltip = 'Time after the first send before each extra send.'
-	})
-	LockToHits = Killaura:CreateToggle({
-		Name = 'Hit lock',
-		Default = true,
-		Tooltip = 'Times each send from the last hit the server counted. Needs the target health to be readable. Falls back to Min send gap when it is not.'
-	})
-	ServerCooldown = Killaura:CreateSlider({
-		Name = 'Server cooldown',
-		Min = 270,
-		Max = 330,
-		Default = 278,
-		Decimal = 10,
-		Suffix = 'ms',
-		Tooltip = 'Hit lock starts probing this long after a counted hit. Too early only wastes a few events.'
-	})
-	ProbeStep = Killaura:CreateSlider({
-		Name = 'Probe step',
-		Min = 4,
-		Max = 40,
-		Default = 45,
-		Suffix = 'ms',
-		Tooltip = 'Time between sends. Never goes under 40. About 22 events per second at most.'
 	})
 
 	task.defer(function()
