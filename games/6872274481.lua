@@ -24332,6 +24332,7 @@ run(function()
 	local AnimationTween
 	local Limit
 	local LegitAura
+	local SwingLog
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local swordEffectFunction, swordEffectController
@@ -24481,11 +24482,22 @@ run(function()
 				end
 
 				local nextAttack = 0
+				local lastSendTime = 0
+				local pauseWhy = {}
+				-- Counts why swings were skipped, only while Swing log is on.
+				local function noteReason(name)
+					if SwingLog.Enabled then
+						pauseWhy[name] = (pauseWhy[name] or 0) + 1
+					end
+				end
 				local lastTool
 				repeat
 					local attacked = {}
 					local ok = pcall(function()
 						local sword, meta = getAttackData()
+						if not sword then
+							noteReason('attackBlocked')
+						end
 						Attacking = false
 						store.KillauraTarget = nil
 						local root = entitylib.isAlive and entitylib.character and entitylib.character.RootPart
@@ -24500,6 +24512,10 @@ run(function()
 								Sort = sortmethods[Sort.Value]
 							})
 
+							if #plrs == 0 then
+								noteReason('noTargetInRange')
+							end
+
 							if #plrs > 0 and not isFuryPotionInUse() then
 								local handItem = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
 								if lastTool ~= sword.tool or (handItem and handItem.Value ~= sword.tool) then
@@ -24508,6 +24524,7 @@ run(function()
 									if switched then
 										-- switchItem already waited 0.08s for the server to accept the weapon,
 										-- so only a short extra gap is needed here (was a second 0.08s pause).
+										noteReason('switchedWeapon')
 										nextAttack = math.max(nextAttack, tick() + 0.02)
 									end
 								end
@@ -24533,7 +24550,10 @@ run(function()
 									-- advertises. Drawing/target selection may extend farther, but firing
 									-- beyond this point produces a local swing with no server damage.
 									local serverRange = math.min(AttackRange.Value, tonumber(meta.sword.attackRange) or 14.4)
-									if delta.Magnitude > serverRange then continue end
+									if delta.Magnitude > serverRange then
+										noteReason('outOfRange')
+										continue
+									end
 
 									local actualRoot = (v.Character and v.Character.PrimaryPart) or v.RootPart
 									local now = tick()
@@ -24582,6 +24602,21 @@ run(function()
 										if sent then
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
 											store.attackReachUpdate = tick() + 1
+											if SwingLog.Enabled then
+												local gap = now - lastSendTime
+												if lastSendTime > 0 and gap > attackInterval + 0.05 then
+													local reasons = {}
+													for name, count in pauseWhy do
+														table.insert(reasons, name .. '=' .. count)
+													end
+													table.sort(reasons)
+													local message = string.format('gap %dms, wanted %dms, fps %d | %s', math.floor(gap * 1000), math.floor(attackInterval * 1000), math.floor(workspace:GetRealPhysicsFPS()), #reasons > 0 and table.concat(reasons, ' ') or 'no reason found')
+													warn('[KillauraV2] ' .. message)
+													notif('KillauraV2', message, 3)
+												end
+												table.clear(pauseWhy)
+												lastSendTime = now
+											end
 										else
 											-- Do not wait out a full attack interval after a failed remote.
 											nextAttack = now + (1 / math.clamp(UpdateRate.Value, 60, 120))
@@ -24914,6 +24949,10 @@ run(function()
 	LegitAura = Killaura:CreateToggle({
 		Name = 'Swing only',
 		Tooltip = 'Only attacks while swinging manually'
+	})
+	SwingLog = Killaura:CreateToggle({
+		Name = 'Swing log',
+		Tooltip = 'Prints each pause between swings and the likely reason.\nTurn on to debug, then off.'
 	})
 
 	task.defer(function()
