@@ -24493,8 +24493,8 @@ run(function()
 				local nextAttack = 0
 				-- Hard floor for the gap between hit events, in seconds. No slider or margin
 				-- setting can send faster than this, so saved settings cannot spam the server.
-				-- 0.2857 is 35 events per 10 seconds.
-				local MIN_SEND_GAP = 0.2857
+				-- 0.283 is about 35.3 events per 10 seconds, so every 10 second window gets at least 35.
+				local MIN_SEND_GAP = 0.283
 				local lastSendTime = 0
 				local pauseWhy = {}
 				-- Counts why swings were skipped, only while Swing log is on.
