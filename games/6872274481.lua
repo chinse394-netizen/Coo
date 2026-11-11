@@ -24493,8 +24493,8 @@ run(function()
 				local nextAttack = 0
 				-- Hard floor for the gap between hit events, in seconds. No slider or margin
 				-- setting can send faster than this, so saved settings cannot spam the server.
-				-- 0.283 is about 35.3 events per 10 seconds, so every 10 second window gets at least 35.
-				local MIN_SEND_GAP = 0.283
+				-- 0.2857 is 35 events per 10 seconds. Going lower (0.283) dropped hits to about 30.
+				local MIN_SEND_GAP = 0.2857
 				local lastSendTime = 0
 				local pauseWhy = {}
 				-- Counts why swings were skipped, only while Swing log is on.
@@ -24671,7 +24671,6 @@ run(function()
 													table.sort(reasons)
 													local message = string.format('gap %dms, wanted %dms, fps %d | %s', math.floor(gap * 1000), math.floor(attackInterval * 1000), math.floor(workspace:GetRealPhysicsFPS()), #reasons > 0 and table.concat(reasons, ' ') or 'no reason found')
 													warn('[KillauraV2] ' .. message)
-													notif('KillauraV2', message, 3)
 												end
 												table.clear(pauseWhy)
 												lastSendTime = now
