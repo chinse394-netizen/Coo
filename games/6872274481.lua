@@ -1361,13 +1361,21 @@ run(function()
 	local storeChanged = bedwars.Store.changed:connect(updateStore)
 	updateStore(bedwars.Store:getState(), {})
 
-	for _, event in {'MatchEndEvent', 'EntityDeathEvent', 'BedwarsBedBreak', 'BalloonPopped', 'AngelProgress', 'GrapplingHookFunctions'} do
+	for _, event in {'MatchEndEvent', 'BedwarsBedBreak', 'BalloonPopped', 'AngelProgress', 'GrapplingHookFunctions'} do
 		if not vape.Connections then return end
 		bedwars.Client:WaitFor(event):andThen(function(connection)
 			vape:Clean(connection:Connect(function(...)
 				vapeEvents[event]:Fire(...)
 			end))
 		end)
+	end
+
+	-- The game now sends death events through Zap instead of the old remote.
+	local deathZap = bedwars.ZapNetworking.EntityDeathEventZap
+	if deathZap then
+		vape:Clean(deathZap.On(function(deathTable)
+			vapeEvents.EntityDeathEvent:Fire(deathTable)
+		end))
 	end
 
 	vape:Clean(bedwars.ZapNetworking.EntityDamageEventZap.On(function(...)
