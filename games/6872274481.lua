@@ -6643,6 +6643,55 @@ run(function()
 		end
 	}
 	
+	-- Fills the equipment icons from the live values on the character.
+	-- Runs from the loop, so it does not depend on the game sending an update.
+	local EquipmentNext = {}
+	local EquipmentWarned = false
+	local function refreshEquipment(ent, nametag)
+		if not Equipment.Enabled or not ent.Player or not ent.Character then
+			return
+		end
+		local now = os.clock()
+		if (EquipmentNext[ent] or 0) > now then
+			return
+		end
+		EquipmentNext[ent] = now + 0.4
+		local ok, err = pcall(function()
+			local function equipped(valueName, inventoryItem)
+				local value = ent.Character:FindFirstChild(valueName)
+				local item = value and value.Value
+				if item then
+					return {itemType = item.Name}
+				end
+				return inventoryItem or {itemType = ''}
+			end
+			local inventory = store.inventories[ent.Player] or {armor = {}}
+			-- Slot 0 is the helmet, 1 the chestplate and 2 the boots.
+			local slots = {
+				Hand = equipped('HandInvItem', inventory.hand),
+				Helmet = equipped('ArmorInvItem_0', inventory.armor[4]),
+				Chestplate = equipped('ArmorInvItem_1', inventory.armor[5]),
+				Boots = equipped('ArmorInvItem_2', inventory.armor[6])
+			}
+			for name, item in slots do
+				local icon = nametag:FindFirstChild(name)
+				if icon then
+					icon.Image = bedwars.getIcon(item, true)
+				end
+			end
+			local kit = ent.Player:GetAttribute('PlayingAsKits')
+			local kitIcon = nametag:FindFirstChild('Kit')
+			local kitMeta = kit and kit ~= 'none' and bedwars.BedwarsKitMeta[kit]
+			if kitIcon then
+				kitIcon.Image = kitMeta and kitMeta.renderImage or ''
+			end
+		end)
+		if not ok and not EquipmentWarned then
+			EquipmentWarned = true
+			warn('[NameTags] equipment error: '..tostring(err))
+		end
+	end
+
 	local Loop = {
 		Normal = function()
 			for ent, nametag in Reference do
@@ -6670,6 +6719,7 @@ run(function()
 					end
 				end
 				nametag.Position = UDim2.fromOffset(headPos.X, headPos.Y)
+				refreshEquipment(ent, nametag)
 			end
 		end,
 		Drawing = function()
@@ -7161,6 +7211,55 @@ run(function()
 		end
 	}
 	
+	-- Fills the equipment icons from the live values on the character.
+	-- Runs from the loop, so it does not depend on the game sending an update.
+	local EquipmentNext = {}
+	local EquipmentWarned = false
+	local function refreshEquipment(ent, nametag)
+		if not Equipment.Enabled or not ent.Player or not ent.Character then
+			return
+		end
+		local now = os.clock()
+		if (EquipmentNext[ent] or 0) > now then
+			return
+		end
+		EquipmentNext[ent] = now + 0.4
+		local ok, err = pcall(function()
+			local function equipped(valueName, inventoryItem)
+				local value = ent.Character:FindFirstChild(valueName)
+				local item = value and value.Value
+				if item then
+					return {itemType = item.Name}
+				end
+				return inventoryItem or {itemType = ''}
+			end
+			local inventory = store.inventories[ent.Player] or {armor = {}}
+			-- Slot 0 is the helmet, 1 the chestplate and 2 the boots.
+			local slots = {
+				Hand = equipped('HandInvItem', inventory.hand),
+				Helmet = equipped('ArmorInvItem_0', inventory.armor[4]),
+				Chestplate = equipped('ArmorInvItem_1', inventory.armor[5]),
+				Boots = equipped('ArmorInvItem_2', inventory.armor[6])
+			}
+			for name, item in slots do
+				local icon = nametag:FindFirstChild(name)
+				if icon then
+					icon.Image = bedwars.getIcon(item, true)
+				end
+			end
+			local kit = ent.Player:GetAttribute('PlayingAsKits')
+			local kitIcon = nametag:FindFirstChild('Kit')
+			local kitMeta = kit and kit ~= 'none' and bedwars.BedwarsKitMeta[kit]
+			if kitIcon then
+				kitIcon.Image = kitMeta and kitMeta.renderImage or ''
+			end
+		end)
+		if not ok and not EquipmentWarned then
+			EquipmentWarned = true
+			warn('[NameTags] equipment error: '..tostring(err))
+		end
+	end
+
 	local Loop = {
 		Normal = function()
 			for ent, nametag in Reference do
@@ -7192,6 +7291,7 @@ run(function()
 					end
 				end
 				nametag.Position = UDim2.fromOffset(headPos.X, headPos.Y)
+				refreshEquipment(ent, nametag)
 			end
 		end,
 		Drawing = function()
