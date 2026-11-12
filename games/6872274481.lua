@@ -6577,13 +6577,19 @@ run(function()
 					Strings[ent] = '<font color="rgb(85, 255, 85)">[</font><font color="rgb(255, 255, 255)">%s</font><font color="rgb(85, 255, 85)">]</font> '..Strings[ent]
 				end
 	
-				if Equipment.Enabled and store.inventories[ent.Player] then
+				if Equipment.Enabled and ent.Player and ent.Character then
 					local kit = ent.Player:GetAttribute('PlayingAsKits')
-					local inventory = store.inventories[ent.Player]
-					nametag.Hand.Image = bedwars.getIcon(inventory.hand or {itemType = ''}, true)
-					nametag.Helmet.Image = bedwars.getIcon(inventory.armor[4] or {itemType = ''}, true)
-					nametag.Chestplate.Image = bedwars.getIcon(inventory.armor[5] or {itemType = ''}, true)
-					nametag.Boots.Image = bedwars.getIcon(inventory.armor[6] or {itemType = ''}, true)
+					-- Read the live values the game keeps on the character.
+					-- Slot 0 is the helmet, 1 the chestplate and 2 the boots.
+					local function equipped(valueName)
+						local value = ent.Character:FindFirstChild(valueName)
+						local item = value and value.Value
+						return {itemType = item and item.Name or ''}
+					end
+					nametag.Hand.Image = bedwars.getIcon(equipped('HandInvItem'), true)
+					nametag.Helmet.Image = bedwars.getIcon(equipped('ArmorInvItem_0'), true)
+					nametag.Chestplate.Image = bedwars.getIcon(equipped('ArmorInvItem_1'), true)
+					nametag.Boots.Image = bedwars.getIcon(equipped('ArmorInvItem_2'), true)
 					nametag.Kit.Image = kit and kit ~= 'none' and bedwars.BedwarsKitMeta[kit].renderImage or ''
 				end
 				
@@ -6718,6 +6724,14 @@ run(function()
 							Removed[methodused](ent)
 						end
 						Added[methodused](ent)
+						-- Fill in equipment icons right away, the game only updates them on changes.
+						if Updated[methodused] then
+							task.delay(0.2, function()
+								if NameTags.Enabled and Reference[ent] then
+									Updated[methodused](ent)
+								end
+							end)
+						end
 					end))
 				end
 				if Updated[methodused] then
@@ -7236,6 +7250,14 @@ run(function()
 							Removed[methodused](ent)
 						end
 						Added[methodused](ent)
+						-- Fill in equipment icons right away, the game only updates them on changes.
+						if Updated[methodused] then
+							task.delay(0.2, function()
+								if NameTags.Enabled and Reference[ent] then
+									Updated[methodused](ent)
+								end
+							end)
+						end
 					end))
 				end
 				if Updated[methodused] then
