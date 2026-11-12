@@ -5285,6 +5285,7 @@ run(function()
 	local SmoothVel
 	local AccuracyLog
 	local LongRange
+	local LeadTune
 	local lastAim
 	local shotStats = {hits = 0, total = 0}
 	local ProjectileAimbot
@@ -5328,7 +5329,8 @@ run(function()
 		if FPSComp.Enabled then
 			lead += frameTime
 		end
-		return math.clamp(lead, 0, 0.4)
+		lead += LeadTune.Value / 1000
+		return math.clamp(lead, 0, 0.5)
 	end
 
 	local function flatten(vector)
@@ -6090,6 +6092,14 @@ run(function()
 		Name = 'Smooth velocity',
 		Default = true,
 		Tooltip = 'Mixes the replicated speed with the speed seen on your screen.\nTurn off if shots get worse.'
+	})
+	LeadTune = ProjectileAimbot:CreateSlider({
+		Name = 'Lead tune',
+		Min = -60,
+		Max = 120,
+		Default = 0,
+		Suffix = 'ms',
+		Tooltip = 'Adds or removes lead time.\nArrows land behind the target: raise it.\nArrows land in front of the target: lower it.'
 	})
 	LongRange = ProjectileAimbot:CreateSlider({
 		Name = 'Long range damping',
