@@ -5293,6 +5293,7 @@ run(function()
 	local frameTime = 1 / 60
 	local profiles = setmetatable({}, {__mode = 'k'})
 	local simCache = setmetatable({}, {__mode = 'k'})
+	local dirCache = setmetatable({}, {__mode = 'k'})
 	local JUMP_VELOCITY = 42.6
 	local SIM_STEP = 1 / 60
 	local SIM_STEPS = 132
@@ -5867,6 +5868,16 @@ run(function()
 						if own then
 							if AccuracyLog.Enabled and lastAim and now - lastAim.time < 0.5 and lastAim.ent.Health then
 								local aim = lastAim
+								-- One console line per real shot.
+								warn(string.format(
+									'[ProjectileAimbot] range %d studs, target speed %.1f, flight %.2fs, lead %dms, ping %dms, arrow speed %d',
+									math.floor(aim.range),
+									aim.speed,
+									aim.flight,
+									math.floor(aim.lead * 1000),
+									math.floor(getPingSeconds() * 1000),
+									math.floor(aim.arrowSpeed)
+								))
 								local healthBefore = aim.ent.Health
 								lastAim = nil
 								task.delay(math.clamp(aim.flight, 0.1, 3) + 0.8, function()
@@ -5986,7 +5997,14 @@ run(function()
 						local lead = isTelepearl and 0 or getLeadTime()
 						local direction
 
-						if plr.RootPart and plr.Player and not isTelepearl then
+						-- The game asks for this every frame while you aim. Reuse the answer for 30ms
+						-- if nothing changed, so the heavy search does not run every frame.
+						local recent = dirCache[plr]
+						if recent and (now - recent.t) < 0.03 and math.abs(recent.speed - projSpeed) < 0.5 and (recent.origin - offsetpos).Magnitude < 0.5 then
+							direction = recent.direction
+						end
+
+						if not direction and plr.RootPart and plr.Player and not isTelepearl then
 							local profile = profiles[plr.Player]
 							local reaction = (profile and LearnMoves.Enabled) and getReactionFactor(profile, now) or 1
 							local ratio = 1
@@ -6031,22 +6049,18 @@ run(function()
 						end
 
 						if direction then
+							dirCache[plr] = {t = now, speed = projSpeed, origin = offsetpos, direction = direction}
 							targetinfo.Targets[plr] = tick() + 1
 							if plr.RootPart then
-								lastAim = {ent = plr, time = os.clock(), flight = (plr.RootPart.Position - offsetpos).Magnitude / projSpeed}
-								if AccuracyLog.Enabled then
-									-- One console line per shot, so misses can be matched to range, speed and lead.
-									local rootVelocity = plr.RootPart.AssemblyLinearVelocity
-									warn(string.format(
-										'[ProjectileAimbot] range %d studs, target speed %.1f, flight %.2fs, lead %dms, ping %dms, arrow speed %d',
-										(plr.RootPart.Position - offsetpos).Magnitude,
-										Vector3.new(rootVelocity.X, 0, rootVelocity.Z).Magnitude,
-										lastAim.flight,
-										lead * 1000,
-										getPingSeconds() * 1000,
-										projSpeed
-									))
-								end
+								lastAim = {
+									ent = plr,
+									time = os.clock(),
+									flight = (plr.RootPart.Position - offsetpos).Magnitude / projSpeed,
+									range = (plr.RootPart.Position - offsetpos).Magnitude,
+									speed = Vector3.new(plr.RootPart.AssemblyLinearVelocity.X, 0, plr.RootPart.AssemblyLinearVelocity.Z).Magnitude,
+									lead = lead,
+									arrowSpeed = projSpeed
+								}
 							end
 							return {
 								initialVelocity = direction * projSpeed,
