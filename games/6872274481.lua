@@ -1361,21 +1361,13 @@ run(function()
 	local storeChanged = bedwars.Store.changed:connect(updateStore)
 	updateStore(bedwars.Store:getState(), {})
 
-	for _, event in {'MatchEndEvent', 'BedwarsBedBreak', 'BalloonPopped', 'AngelProgress', 'GrapplingHookFunctions'} do
+	for _, event in {'MatchEndEvent', 'EntityDeathEvent', 'BedwarsBedBreak', 'BalloonPopped', 'AngelProgress', 'GrapplingHookFunctions'} do
 		if not vape.Connections then return end
 		bedwars.Client:WaitFor(event):andThen(function(connection)
 			vape:Clean(connection:Connect(function(...)
 				vapeEvents[event]:Fire(...)
 			end))
 		end)
-	end
-
-	-- The game now sends death events through Zap instead of the old remote.
-	local deathZap = bedwars.ZapNetworking.EntityDeathEventZap
-	if deathZap then
-		vape:Clean(deathZap.On(function(deathTable)
-			vapeEvents.EntityDeathEvent:Fire(deathTable)
-		end))
 	end
 
 	vape:Clean(bedwars.ZapNetworking.EntityDamageEventZap.On(function(...)
@@ -5284,9 +5276,6 @@ run(function()
 	local JukeGuard
 	local SmoothVel
 	local AccuracyLog
-	local LongRange
-	local LeadTune
-	local AllowLobs
 	local lastAim
 	local shotStats = {hits = 0, total = 0}
 	local ProjectileAimbot
@@ -5294,7 +5283,6 @@ run(function()
 	local frameTime = 1 / 60
 	local profiles = setmetatable({}, {__mode = 'k'})
 	local simCache = setmetatable({}, {__mode = 'k'})
-	local dirCache = setmetatable({}, {__mode = 'k'})
 	local JUMP_VELOCITY = 42.6
 	local SIM_STEP = 1 / 60
 	local SIM_STEPS = 132
@@ -5323,16 +5311,12 @@ run(function()
 	local function getLeadTime()
 		local lead = 0
 		if PingComp.Enabled then
-			-- Other players show about half a ping plus the interpolation delay behind the server.
-			-- Your shot also needs half a ping to reach the server, so the target moves a full ping
-			-- plus the delay before the arrow starts. Half a ping was not enough for walking targets.
-			lead += getPingSeconds() + (InterpDelay.Value / 1000) - 0.03
+			lead += (getPingSeconds() / 2) + (InterpDelay.Value / 1000) - 0.045
 		end
 		if FPSComp.Enabled then
 			lead += frameTime
 		end
-		lead += LeadTune.Value / 1000
-		return math.clamp(lead, 0, 0.5)
+		return math.clamp(lead, 0, 0.4)
 	end
 
 	local function flatten(vector)
@@ -5821,8 +5805,7 @@ run(function()
 			end
 		end
 
-		-- Arc 1 is the direct shot. Arc 2 is the high lob, which stays in the air long enough for a moving player to dodge.
-		for arcIndex = 1, (AllowLobs.Enabled and 2 or 1) do
+		for arcIndex = 1, 2 do
 			for index = 1, #offsets do
 				local arc = allArcs[index][arcIndex]
 				if arc and not getBlockedTime(origin, arc.direction, speed, gravity, arc.time) then
@@ -5870,18 +5853,6 @@ run(function()
 						if own then
 							if AccuracyLog.Enabled and lastAim and now - lastAim.time < 0.5 and lastAim.ent.Health then
 								local aim = lastAim
-								-- One console line per real shot.
-								warn(string.format(
-									'[ProjectileAimbot] range %d studs, speed seen %.1f, speed used %.1f, speed from game %.1f, flight %.2fs, lead %dms, ping %dms, arrow speed %d',
-									math.floor(aim.range),
-									aim.replicatedSpeed,
-									aim.usedSpeed,
-									aim.speed,
-									aim.flight,
-									math.floor(aim.lead * 1000),
-									math.floor(getPingSeconds() * 1000),
-									math.floor(aim.arrowSpeed)
-								))
 								local healthBefore = aim.ent.Health
 								lastAim = nil
 								task.delay(math.clamp(aim.flight, 0.1, 3) + 0.8, function()
@@ -5976,7 +5947,6 @@ run(function()
 
 						local isTelepearl = projmeta.projectile == 'telepearl'
 						local velocity = targetPart.AssemblyLinearVelocity or targetPart.Velocity or Vector3.zero
-						local replicatedSpeed = flatten(velocity).Magnitude
 						local trackedProfile = plr.Player and profiles[plr.Player]
 						if SmoothVel.Enabled and trackedProfile then
 							local tracked = trackedProfile.samples[#trackedProfile.samples]
@@ -5984,16 +5954,20 @@ run(function()
 								velocity = tracked.v
 							end
 						end
-						local usedSpeed = flatten(velocity).Magnitude
 						local scale = VelocityPrediction.Value / 100
-						-- Long flights: players rarely keep one speed for a full second, so trust the
-						-- current speed a little less the longer the arrow is in the air.
-						if projmeta.projectile:find('arrow', 1, true) then
-							local flightGuess = (targetPart.Position - offsetpos).Magnitude / math.max(projSpeed, 1)
-							scale *= 1 - math.clamp((flightGuess - 0.5) * (LongRange.Value / 100), 0, 0.3)
-						end
 						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
-						local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
+		local profileSamples = plr.Player and profiles[plr.Player] and profiles[plr.Player].samples
+		local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
+		if profileSamples and #profileSamples >= 3 and os.clock() - profileSamples[#profileSamples].t < 0.12 then
+			local newest = profileSamples[#profileSamples]
+			local previous = profileSamples[#profileSamples - 1]
+			local older = profileSamples[#profileSamples - 2]
+			local dtNew = math.max(newest.t - previous.t, 0.01)
+			local dtOld = math.max(previous.t - older.t, 0.01)
+			local acceleration = ((newest.v - previous.v) / dtNew + (previous.v - older.v) / dtOld) * 0.5
+			acceleration = Vector3.new(math.clamp(acceleration.X, -120, 120), math.clamp(acceleration.Y, -80, 80), math.clamp(acceleration.Z, -120, 120))
+			velocity += acceleration * math.clamp(getLeadTime(), 0, 0.25)
+		end
 						if isTelepearl then
 							velocity = Vector3.zero
 						end
@@ -6003,20 +5977,9 @@ run(function()
 						local lead = isTelepearl and 0 or getLeadTime()
 						local direction
 
-						-- The game asks for this every frame while you aim. Reuse the answer for 30ms
-						-- if nothing changed, so the heavy search does not run every frame.
-						local recent = dirCache[plr]
-						if recent and (now - recent.t) < 0.03 and math.abs(recent.speed - projSpeed) < 0.5 and (recent.origin - offsetpos).Magnitude < 0.5 then
-							direction = recent.direction
-						end
-
-						if not direction and plr.RootPart and plr.Player and not isTelepearl then
+						if plr.RootPart and plr.Player and not isTelepearl then
 							local profile = profiles[plr.Player]
 							local reaction = (profile and LearnMoves.Enabled) and getReactionFactor(profile, now) or 1
-							-- Straight movers keep their speed. Only damp the lead when a real pattern was seen.
-							if profile and not getStrafePattern(profile, now) and not getHopPattern(profile, now) then
-								reaction = 1
-							end
 							local ratio = 1
 							if profile and LearnMoves.Enabled and JukeGuard.Enabled and not isArrow and reaction == 1 and not getStrafePattern(profile, now) then
 								local flightGuess = ((plr.RootPart.Position - offsetpos).Magnitude / projSpeed) + lead
@@ -6025,7 +5988,7 @@ run(function()
 							local simVelocity = Vector3.new(velocity.X * ratio, velocity.Y, velocity.Z * ratio)
 							local cached = simCache[plr]
 							local path
-							if cached and now - cached.t < 0.04 then
+			if cached and now - cached.t < 0.04 then
 								path = cached.path
 							else
 								local success, result = pcall(simulatePath, plr, profile, simVelocity, now, playerGravity, reaction)
@@ -6059,20 +6022,9 @@ run(function()
 						end
 
 						if direction then
-							dirCache[plr] = {t = now, speed = projSpeed, origin = offsetpos, direction = direction}
 							targetinfo.Targets[plr] = tick() + 1
 							if plr.RootPart then
-								lastAim = {
-									ent = plr,
-									time = os.clock(),
-									flight = (plr.RootPart.Position - offsetpos).Magnitude / projSpeed,
-									range = (plr.RootPart.Position - offsetpos).Magnitude,
-									speed = Vector3.new(plr.RootPart.AssemblyLinearVelocity.X, 0, plr.RootPart.AssemblyLinearVelocity.Z).Magnitude,
-									lead = lead,
-									arrowSpeed = projSpeed,
-									replicatedSpeed = replicatedSpeed,
-									usedSpeed = usedSpeed
-								}
+								lastAim = {ent = plr, time = os.clock(), flight = (plr.RootPart.Position - offsetpos).Magnitude / projSpeed}
 							end
 							return {
 								initialVelocity = direction * projSpeed,
@@ -6131,27 +6083,6 @@ run(function()
 		Name = 'Smooth velocity',
 		Default = true,
 		Tooltip = 'Mixes the replicated speed with the speed seen on your screen.\nTurn off if shots get worse.'
-	})
-	AllowLobs = ProjectileAimbot:CreateToggle({
-		Name = 'Allow lob shots',
-		Default = false,
-		Tooltip = 'When a wall blocks the direct shot, aim high over it.\nLobs fly for a long time and moving players dodge them. Off is more accurate.'
-	})
-	LeadTune = ProjectileAimbot:CreateSlider({
-		Name = 'Lead tune',
-		Min = -60,
-		Max = 120,
-		Default = 0,
-		Suffix = 'ms',
-		Tooltip = 'Adds or removes lead time.\nArrows land behind the target: raise it.\nArrows land in front of the target: lower it.'
-	})
-	LongRange = ProjectileAimbot:CreateSlider({
-		Name = 'Long range damping',
-		Min = 0,
-		Max = 100,
-		Default = 0,
-		Suffix = '%',
-		Tooltip = 'Trusts the target speed a bit less on long shots. Max 30 percent less.\n0 turns it off.'
 	})
 	AccuracyLog = ProjectileAimbot:CreateToggle({
 		Name = 'Accuracy log',
@@ -6522,9 +6453,9 @@ run(function()
 					local Icon = Instance.new('ImageLabel')
 					Icon.Name = 'RankIcon'
 					Icon.Size = UDim2.fromOffset(30, 30)
-					Icon.Position = UDim2.new(1, 10, 0, -4)
+					Icon.Position = UDim2.fromOffset(size.X + 10, -4)
 					Icon.BackgroundTransparency = 1
-					Icon.Image = (store.rank and store.rank[ent.Player] and store.rank[ent.Player]:async() and bedwars.RankMeta and bedwars.RankMeta[store.rank[ent.Player]:async()] and bedwars.RankMeta[store.rank[ent.Player]:async()].image) or ''
+					Icon.Image = store.rank[ent.Player]:async() and bedwars.RankMeta[store.rank[ent.Player]:async()].image or ''
 					Icon.Parent = nametag
 				end
 			end)
@@ -6536,7 +6467,7 @@ run(function()
 					Icon.Size = UDim2.fromOffset(30, 30)
 					Icon.Position = UDim2.fromOffset(-30, -4)
 					Icon.BackgroundTransparency = 1
-					Icon.Image = (store.enchants and store.enchants[ent.Player] and store.enchants[ent.Player]:async()) or ''
+					Icon.Image = store.enchants[ent.Player]:async() or ''
 					Icon.Parent = nametag
 				end
 			end)
@@ -6631,24 +6562,18 @@ run(function()
 					Strings[ent] = '<font color="rgb(85, 255, 85)">[</font><font color="rgb(255, 255, 255)">%s</font><font color="rgb(85, 255, 85)">]</font> '..Strings[ent]
 				end
 	
-				if Equipment.Enabled and ent.Player and ent.Character then
+				if Equipment.Enabled and store.inventories[ent.Player] then
 					local kit = ent.Player:GetAttribute('PlayingAsKits')
-					-- Read the live values the game keeps on the character.
-					-- Slot 0 is the helmet, 1 the chestplate and 2 the boots.
-					local function equipped(valueName)
-						local value = ent.Character:FindFirstChild(valueName)
-						local item = value and value.Value
-						return {itemType = item and item.Name or ''}
-					end
-					nametag.Hand.Image = bedwars.getIcon(equipped('HandInvItem'), true)
-					nametag.Helmet.Image = bedwars.getIcon(equipped('ArmorInvItem_0'), true)
-					nametag.Chestplate.Image = bedwars.getIcon(equipped('ArmorInvItem_1'), true)
-					nametag.Boots.Image = bedwars.getIcon(equipped('ArmorInvItem_2'), true)
+					local inventory = store.inventories[ent.Player]
+					nametag.Hand.Image = bedwars.getIcon(inventory.hand or {itemType = ''}, true)
+					nametag.Helmet.Image = bedwars.getIcon(inventory.armor[4] or {itemType = ''}, true)
+					nametag.Chestplate.Image = bedwars.getIcon(inventory.armor[5] or {itemType = ''}, true)
+					nametag.Boots.Image = bedwars.getIcon(inventory.armor[6] or {itemType = ''}, true)
 					nametag.Kit.Image = kit and kit ~= 'none' and bedwars.BedwarsKitMeta[kit].renderImage or ''
 				end
 				
 				if Enchant.Enabled and nametag:FindFirstChild('EnchantIcon') then
-					nametag.EnchantIcon.Image = (store.enchants and store.enchants[ent.Player] and store.enchants[ent.Player]:async()) or ''
+					nametag.EnchantIcon.Image = store.enchants[ent.Player]:async() or ''
 				end
 	
 				local size = getfontsize(removeTags(Strings[ent]), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
@@ -6697,55 +6622,6 @@ run(function()
 		end
 	}
 	
-	-- Fills the equipment icons from the live values on the character.
-	-- Runs from the loop, so it does not depend on the game sending an update.
-	local EquipmentNext = {}
-	local EquipmentWarned = false
-	local function refreshEquipment(ent, nametag)
-		if not Equipment.Enabled or not ent.Player or not ent.Character then
-			return
-		end
-		local now = os.clock()
-		if (EquipmentNext[ent] or 0) > now then
-			return
-		end
-		EquipmentNext[ent] = now + 0.4
-		local ok, err = pcall(function()
-			local function equipped(valueName, inventoryItem)
-				local value = ent.Character:FindFirstChild(valueName)
-				local item = value and value.Value
-				if item then
-					return {itemType = item.Name}
-				end
-				return inventoryItem or {itemType = ''}
-			end
-			local inventory = store.inventories[ent.Player] or {armor = {}}
-			-- Slot 0 is the helmet, 1 the chestplate and 2 the boots.
-			local slots = {
-				Hand = equipped('HandInvItem', inventory.hand),
-				Helmet = equipped('ArmorInvItem_0', inventory.armor[4]),
-				Chestplate = equipped('ArmorInvItem_1', inventory.armor[5]),
-				Boots = equipped('ArmorInvItem_2', inventory.armor[6])
-			}
-			for name, item in slots do
-				local icon = nametag:FindFirstChild(name)
-				if icon then
-					icon.Image = bedwars.getIcon(item, true)
-				end
-			end
-			local kit = ent.Player:GetAttribute('PlayingAsKits')
-			local kitIcon = nametag:FindFirstChild('Kit')
-			local kitMeta = kit and kit ~= 'none' and bedwars.BedwarsKitMeta[kit]
-			if kitIcon then
-				kitIcon.Image = kitMeta and kitMeta.renderImage or ''
-			end
-		end)
-		if not ok and not EquipmentWarned then
-			EquipmentWarned = true
-			warn('[NameTags] equipment error: '..tostring(err))
-		end
-	end
-
 	local Loop = {
 		Normal = function()
 			for ent, nametag in Reference do
@@ -6773,7 +6649,6 @@ run(function()
 					end
 				end
 				nametag.Position = UDim2.fromOffset(headPos.X, headPos.Y)
-				refreshEquipment(ent, nametag)
 			end
 		end,
 		Drawing = function()
@@ -6828,14 +6703,6 @@ run(function()
 							Removed[methodused](ent)
 						end
 						Added[methodused](ent)
-						-- Fill in equipment icons right away, the game only updates them on changes.
-						if Updated[methodused] then
-							task.delay(0.2, function()
-								if NameTags.Enabled and Reference[ent] then
-									Updated[methodused](ent)
-								end
-							end)
-						end
 					end))
 				end
 				if Updated[methodused] then
@@ -7081,9 +6948,9 @@ run(function()
 					local Icon = Instance.new('ImageLabel')
 					Icon.Name = 'RankIcon'
 					Icon.Size = UDim2.fromOffset(30, 30)
-					Icon.Position = UDim2.new(1, 10, 0, -4)
+					Icon.Position = UDim2.fromOffset(size.X + 10, -4)
 					Icon.BackgroundTransparency = 1
-					Icon.Image = (store.rank and store.rank[ent.Player] and store.rank[ent.Player]:async() and bedwars.RankMeta and bedwars.RankMeta[store.rank[ent.Player]:async()] and bedwars.RankMeta[store.rank[ent.Player]:async()].image) or ''
+					Icon.Image = store.rank[ent.Player]:async() and bedwars.RankMeta[store.rank[ent.Player]:async()].image or ''
 					Icon.Parent = nametag
 				end
 			end)
@@ -7095,7 +6962,7 @@ run(function()
 					Icon.Size = UDim2.fromOffset(30, 30)
 					Icon.Position = UDim2.fromOffset(-30, -4)
 					Icon.BackgroundTransparency = 1
-					Icon.Image = (store.enchants and store.enchants[ent.Player] and store.enchants[ent.Player]:async()) or ''
+					Icon.Image = store.enchants[ent.Player]:async() or ''
 					Icon.Parent = nametag
 				end
 			end)
@@ -7195,24 +7062,18 @@ run(function()
 					Strings[ent] = '<font color="rgb(85, 255, 85)">[</font><font color="rgb(255, 255, 255)">%s</font><font color="rgb(85, 255, 85)">]</font> '..Strings[ent]
 				end
 	
-				if Equipment.Enabled and ent.Player and ent.Character then
+				if Equipment.Enabled and store.inventories[ent.Player] then
 					local kit = ent.Player:GetAttribute('PlayingAsKits')
-					-- Read the live values the game keeps on the character.
-					-- Slot 0 is the helmet, 1 the chestplate and 2 the boots.
-					local function equipped(valueName)
-						local value = ent.Character:FindFirstChild(valueName)
-						local item = value and value.Value
-						return {itemType = item and item.Name or ''}
-					end
-					nametag.Hand.Image = bedwars.getIcon(equipped('HandInvItem'), true)
-					nametag.Helmet.Image = bedwars.getIcon(equipped('ArmorInvItem_0'), true)
-					nametag.Chestplate.Image = bedwars.getIcon(equipped('ArmorInvItem_1'), true)
-					nametag.Boots.Image = bedwars.getIcon(equipped('ArmorInvItem_2'), true)
+					local inventory = store.inventories[ent.Player]
+					nametag.Hand.Image = bedwars.getIcon(inventory.hand or {itemType = ''}, true)
+					nametag.Helmet.Image = bedwars.getIcon(inventory.armor[4] or {itemType = ''}, true)
+					nametag.Chestplate.Image = bedwars.getIcon(inventory.armor[5] or {itemType = ''}, true)
+					nametag.Boots.Image = bedwars.getIcon(inventory.armor[6] or {itemType = ''}, true)
 					nametag.Kit.Image = kit and kit ~= 'none' and bedwars.BedwarsKitMeta[kit].renderImage or ''
 				end
 				
 				if Enchant.Enabled and nametag:FindFirstChild('EnchantIcon') then
-					nametag.EnchantIcon.Image = (store.enchants and store.enchants[ent.Player] and store.enchants[ent.Player]:async()) or ''
+					nametag.EnchantIcon.Image = store.enchants[ent.Player]:async() or ''
 				end
 	
 				local size = getfontsize(removeTags(Strings[ent]), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
@@ -7265,55 +7126,6 @@ run(function()
 		end
 	}
 	
-	-- Fills the equipment icons from the live values on the character.
-	-- Runs from the loop, so it does not depend on the game sending an update.
-	local EquipmentNext = {}
-	local EquipmentWarned = false
-	local function refreshEquipment(ent, nametag)
-		if not Equipment.Enabled or not ent.Player or not ent.Character then
-			return
-		end
-		local now = os.clock()
-		if (EquipmentNext[ent] or 0) > now then
-			return
-		end
-		EquipmentNext[ent] = now + 0.4
-		local ok, err = pcall(function()
-			local function equipped(valueName, inventoryItem)
-				local value = ent.Character:FindFirstChild(valueName)
-				local item = value and value.Value
-				if item then
-					return {itemType = item.Name}
-				end
-				return inventoryItem or {itemType = ''}
-			end
-			local inventory = store.inventories[ent.Player] or {armor = {}}
-			-- Slot 0 is the helmet, 1 the chestplate and 2 the boots.
-			local slots = {
-				Hand = equipped('HandInvItem', inventory.hand),
-				Helmet = equipped('ArmorInvItem_0', inventory.armor[4]),
-				Chestplate = equipped('ArmorInvItem_1', inventory.armor[5]),
-				Boots = equipped('ArmorInvItem_2', inventory.armor[6])
-			}
-			for name, item in slots do
-				local icon = nametag:FindFirstChild(name)
-				if icon then
-					icon.Image = bedwars.getIcon(item, true)
-				end
-			end
-			local kit = ent.Player:GetAttribute('PlayingAsKits')
-			local kitIcon = nametag:FindFirstChild('Kit')
-			local kitMeta = kit and kit ~= 'none' and bedwars.BedwarsKitMeta[kit]
-			if kitIcon then
-				kitIcon.Image = kitMeta and kitMeta.renderImage or ''
-			end
-		end)
-		if not ok and not EquipmentWarned then
-			EquipmentWarned = true
-			warn('[NameTags] equipment error: '..tostring(err))
-		end
-	end
-
 	local Loop = {
 		Normal = function()
 			for ent, nametag in Reference do
@@ -7345,7 +7157,6 @@ run(function()
 					end
 				end
 				nametag.Position = UDim2.fromOffset(headPos.X, headPos.Y)
-				refreshEquipment(ent, nametag)
 			end
 		end,
 		Drawing = function()
@@ -7404,14 +7215,6 @@ run(function()
 							Removed[methodused](ent)
 						end
 						Added[methodused](ent)
-						-- Fill in equipment icons right away, the game only updates them on changes.
-						if Updated[methodused] then
-							task.delay(0.2, function()
-								if NameTags.Enabled and Reference[ent] then
-									Updated[methodused](ent)
-								end
-							end)
-						end
 					end))
 				end
 				if Updated[methodused] then
@@ -24516,7 +24319,6 @@ run(function()
 	local Sort
 	local SwingRange
 	local AttackRange
-	local ChargeTime
 	local UpdateRate
 	local AttackRate
 	local HitMargin
@@ -24540,20 +24342,21 @@ run(function()
 	local AnimationTween
 	local Limit
 	local LegitAura
-	local SwingLog
-	local CapToCooldown
-	local SendGap
-	local ExtraSends
-	local LockToHits
-	local ProbeStep
-	local ServerCooldown
-	local ResendGap
 	local Particles, Boxes = {}, {}
 	local anims, AnimDelay, AnimTween, armC0 = vape.Libraries.auraanims, tick()
 	local swordEffectFunction, swordEffectController
 	local scytheAnimationFunction, scytheAnimationController
 	local animationHooksInstalled = false
-	local AttackRemote = {FireServer = function() end}
+	local runId = 0
+	local AttackRemote
+	local armWrist
+
+	-- Returns the viewmodel wrist joint, or nil when it does not exist.
+	local function getWrist()
+		local viewmodel = gameCamera.Viewmodel
+		local hand = viewmodel and viewmodel:FindFirstChild('RightHand')
+		return hand and hand:FindFirstChild('RightWrist') or nil
+	end
 	local function isFuryPotionInUse()
 		local hand = store.hand
 		local tool = hand and hand.tool
@@ -24610,6 +24413,8 @@ run(function()
 		Name = 'KillauraV2',
 		Function = function(callback)
 			if callback then
+				runId += 1
+				local myRun = runId
 				-- Executor API: setfpscap / getfpscap. Not on every executor.
 				if UncapFPS.Enabled and setfpscap then
 					pcall(function()
@@ -24624,7 +24429,7 @@ run(function()
 						if Killaura.Enabled then
 							refreshAttackRemote()
 						end
-					until not Killaura.Enabled
+					until (not Killaura.Enabled) or runId ~= myRun
 				end)
 				if inputService.TouchEnabled then
 					pcall(function()
@@ -24649,21 +24454,25 @@ run(function()
 					}
 					swordEffectFunction = oldSwing or bedwars.SwordController.playSwordEffect
 					scytheAnimationFunction = bedwars.ScytheController.playLocalAnimation
-					local _, currentSwordEffectController = debug.getupvalue(swordEffectFunction, 6)
-					local _, currentScytheAnimationController = debug.getupvalue(scytheAnimationFunction, 3)
-					swordEffectController = currentSwordEffectController
-					scytheAnimationController = currentScytheAnimationController
-					debug.setupvalue(swordEffectFunction, 6, fake)
-					debug.setupvalue(scytheAnimationFunction, 3, fake)
-					animationHooksInstalled = true
+					pcall(function()
+						local _, currentSwordEffectController = debug.getupvalue(swordEffectFunction, 6)
+						local _, currentScytheAnimationController = debug.getupvalue(scytheAnimationFunction, 3)
+						swordEffectController = currentSwordEffectController
+						scytheAnimationController = currentScytheAnimationController
+						animationHooksInstalled = true
+						debug.setupvalue(swordEffectFunction, 6, fake)
+						debug.setupvalue(scytheAnimationFunction, 3, fake)
+					end)
 
 					task.spawn(function()
 						local started = false
 						repeat
-							if Attacking then
-								if not armC0 then
-									armC0 = gameCamera.Viewmodel.RightHand.RightWrist.C0
-								end
+							local wrist = getWrist()
+							if wrist and wrist ~= armWrist then
+								armWrist = wrist
+								armC0 = wrist.C0
+							end
+							if wrist and Attacking then
 								local first = not started
 								started = true
 
@@ -24673,115 +24482,40 @@ run(function()
 
 							local animationSpeed = math.max(AnimationSpeed.Value, 0.05)
 							for _, v in anims[AnimationMode.Value] or {} do
-								AnimTween = tweenService:Create(gameCamera.Viewmodel.RightHand.RightWrist, TweenInfo.new(first and (AnimationTween.Enabled and 0.001 or 0.1) or v.Time / animationSpeed, Enum.EasingStyle.Linear), {
-										C0 = armC0 * v.CFrame
-									})
-									AnimTween:Play()
-									AnimTween.Completed:Wait()
+								local tweenTime = first and (AnimationTween.Enabled and 0.001 or 0.1) or v.Time / animationSpeed
+								AnimTween = tweenService:Create(wrist, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {
+									C0 = armC0 * v.CFrame
+								})
+								AnimTween:Play()
+								-- Wait by time so a destroyed viewmodel cannot hang this thread.
+								task.wait(tweenTime)
 									first = false
-									if (not Killaura.Enabled) or (not Attacking) then break end
+									if (not Killaura.Enabled) or (not Attacking) or runId ~= myRun or not wrist.Parent then break end
 								end
 							elseif started then
 								started = false
-								AnimTween = tweenService:Create(gameCamera.Viewmodel.RightHand.RightWrist, TweenInfo.new(AnimationTween.Enabled and 0.001 or 0.3, Enum.EasingStyle.Exponential), {
-									C0 = armC0
-								})
-								AnimTween:Play()
+								if wrist and armC0 then
+									AnimTween = tweenService:Create(wrist, TweenInfo.new(AnimationTween.Enabled and 0.001 or 0.3, Enum.EasingStyle.Exponential), {
+										C0 = armC0
+									})
+									AnimTween:Play()
+								end
 							end
 
 							if not started then
 								task.wait(1 / math.max(UpdateRate.Value, 1))
 							end
-						until (not Killaura.Enabled) or (not Animation.Enabled)
+						until (not Killaura.Enabled) or (not Animation.Enabled) or runId ~= myRun
 					end)
 				end
 
 				local nextAttack = 0
-				-- Hit lock: watch the target's health so the next send is timed from the
-				-- last hit the server really counted, instead of a free running clock.
-				local acceptedAt = 0
-				local lastSwingFx = 0
-				local denseProbes = 0
-				local sendTimes = {}
-				local lockedChar = nil
-				local lockedHealth = nil
-				local lockedConnection = nil
-				local function lockTo(character)
-					if character == lockedChar then
-						return
-					end
-					if lockedConnection then
-						lockedConnection:Disconnect()
-						lockedConnection = nil
-					end
-					lockedChar = character
-					lockedHealth = character and character:GetAttribute('Health')
-					if not character then
-						return
-					end
-					lockedConnection = character:GetAttributeChangedSignal('Health'):Connect(function()
-						local health = character:GetAttribute('Health')
-						if type(health) == 'number' and type(lockedHealth) == 'number' and health < lockedHealth then
-							acceptedAt = tick()
-							denseProbes = 1
-							-- The server counted the hit about one ping ago, and our next event needs one ping to arrive.
-							local ping = lplr:GetNetworkPing()
-							nextAttack = acceptedAt + (math.max(ServerCooldown.Value, 270) / 1000) - (ping * 2)
-						end
-						lockedHealth = health
-					end)
-					Killaura:Clean(lockedConnection)
-				end
-				local lastSendTime = 0
-				local pauseWhy = {}
-				-- Counts why swings were skipped, only while Swing log is on.
-				local function noteReason(name)
-					if SwingLog.Enabled then
-						pauseWhy[name] = (pauseWhy[name] or 0) + 1
-					end
-				end
-				-- Swing log stats: events sent, damage seen on the target, and gap sizes.
-				local logStats = {sends = 0, hits = 0, gapSum = 0, maxGap = 0, lastHealth = -1}
-				local lastTargetHealth = {}
-				Killaura:Clean(runService.Heartbeat:Connect(function()
-					if not SwingLog.Enabled then
-						return
-					end
-					local target = store.KillauraTarget
-					local health = target and target.Health
-					if type(health) ~= 'number' then
-						return
-					end
-					local before = lastTargetHealth[target]
-					lastTargetHealth[target] = health
-					logStats.lastHealth = health
-					if before and health < before then
-						logStats.hits += 1
-					end
-				end))
-				task.spawn(function()
-					repeat
-						task.wait(10)
-						if SwingLog.Enabled and logStats.sends > 0 then
-							local message = string.format('10s: sent %d, hits seen %d, target health %d, avg gap %dms, max gap %dms', logStats.sends, logStats.hits, math.floor(logStats.lastHealth), math.floor(logStats.gapSum / math.max(logStats.sends - 1, 1) * 1000), math.floor(logStats.maxGap * 1000))
-							warn('[KillauraV2] ' .. message)
-							notif('KillauraV2', message, 5)
-						end
-						logStats.sends = 0
-						logStats.hits = 0
-						logStats.gapSum = 0
-						logStats.maxGap = 0
-						table.clear(lastTargetHealth)
-					until not Killaura.Enabled
-				end)
 				local lastTool
+				local lastErrorWarn = 0
 				repeat
 					local attacked = {}
-					local ok = pcall(function()
+					local ok, err = pcall(function()
 						local sword, meta = getAttackData()
-						if not sword then
-							noteReason('attackBlocked')
-						end
 						Attacking = false
 						store.KillauraTarget = nil
 						local root = entitylib.isAlive and entitylib.character and entitylib.character.RootPart
@@ -24796,22 +24530,19 @@ run(function()
 								Sort = sortmethods[Sort.Value]
 							})
 
-							if #plrs == 0 then
-								noteReason('noTargetInRange')
-							end
-
 							if #plrs > 0 and not isFuryPotionInUse() then
 								local handItem = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
 								if lastTool ~= sword.tool or (handItem and handItem.Value ~= sword.tool) then
 									local switched = switchItem(sword.tool, 0.08)
 									lastTool = sword.tool
 									if switched then
-										-- switchItem already waited 0.08s for the server to accept the weapon,
-										-- so only a short extra gap is needed here (was a second 0.08s pause).
-										noteReason('switchedWeapon')
-										nextAttack = math.max(nextAttack, tick() + 0.02)
+										-- EquipItem is asynchronous.  Give the server one short tick to
+										-- accept the new weapon before sending an attack request.
+										nextAttack = math.max(nextAttack, os.clock() + 0.08)
 									end
 								end
+								-- Stop if disabled or restarted while switchItem yielded.
+								if runId ~= myRun or not Killaura.Enabled then return end
 								local selfpos = root.Position
 
 								for _, v in plrs do
@@ -24834,58 +24565,18 @@ run(function()
 									-- advertises. Drawing/target selection may extend farther, but firing
 									-- beyond this point produces a local swing with no server damage.
 									local serverRange = math.min(AttackRange.Value, tonumber(meta.sword.attackRange) or 14.4)
-									if delta.Magnitude > serverRange then
-										noteReason('outOfRange')
-										continue
-									end
+									if delta.Magnitude > serverRange then continue end
 
 									local actualRoot = (v.Character and v.Character.PrimaryPart) or v.RootPart
-									local now = tick()
+									local now = os.clock()
 									local holdingSword = handItem and handItem.Value == sword.tool
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
-									if actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
-										-- One hit event per swing, like the real game.
-										-- The gap comes from the Attack attempts slider (36 gives about 35 sends per 10 seconds).
-										local weaponInterval = 10 / math.max(AttackRate.Value, 1)
-										-- Optional cap so swings are never faster than the sword cooldown.
-										if CapToCooldown.Enabled then
-											weaponInterval = math.max(weaponInterval, tonumber(meta.sword.attackSpeed) or 0.3)
-										end
-										-- Probe mode: an event every few ms near the server edge, with hard limits
-										-- so the server rate limit can never be reached (about 22 events per second at most).
-										lockTo(v.Character)
-										local probe = math.max(ProbeStep.Value, 40) / 1000
-										-- Right at the server edge, probe every 7ms for 1 extra send (2 events per hit) so the hit
-										-- lands within a few ms of the cooldown ending.
-										if LockToHits.Enabled and (tick() - acceptedAt) < 1 then
-											if denseProbes > 0 then
-												denseProbes -= 1
-												probe = 0.007
-											else
-												probe = 0.04
-											end
-										end
-										-- Event budget over the last 10 seconds. Normal fighting uses about 100.
-										-- When nothing is being counted (target out of reach, blocked, or the server
-										-- ignores the hits) it falls back to one event per cooldown, so a long fight
-										-- never floods the server and desyncs you.
-										local cutoff = now - 10
-										while sendTimes[1] and sendTimes[1] < cutoff do
-											table.remove(sendTimes, 1)
-										end
-										table.insert(sendTimes, now)
-										if #sendTimes >= 110 then
-											probe = math.max(probe, 0.2857)
-										end
-										nextAttack = now + probe
-										local attackInterval = probe
-										-- Events go out often, but the swing animation only plays once per
-										-- cooldown, so there are no swings that the server ignored.
-										local playSwing = (now - lastSwingFx) >= 0.26
-										if playSwing then
-											lastSwingFx = now
-										end
-										if playSwing and not Swing.Enabled and not LegitAura.Enabled then
+									if AttackRemote and actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
+										-- Minimum delay between attack requests.
+										local weaponInterval = 0.05
+										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), 0.03)
+										nextAttack = now + attackInterval + 0.002
+										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
 											if type(meta.displayName) == 'string' and meta.displayName:find(' Scythe', 1, true) then
 												bedwars.ScytheController:playLocalAnimation()
@@ -24895,7 +24586,6 @@ run(function()
 												setthreadidentity(8)
 											end
 										end
-										local dir = CFrame.lookAt(selfpos, actualRoot.Position).LookVector
 										local sent = pcall(function()
 											local currentPosition = actualRoot.Position
 											local currentDirection = CFrame.lookAt(selfpos, currentPosition).LookVector
@@ -24919,78 +24609,9 @@ run(function()
 										if sent then
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
 											store.attackReachUpdate = tick() + 1
-											-- Extra resends fill the little gaps when a send lands just before the
-											-- server cooldown ends. If the first one counted, the server just ignores them.
-											local weaponTool = sword.tool
-											local resendTarget = v
-											local resendRoot = actualRoot
-											for resendIndex = 1, math.floor(ExtraSends.Value) do
-												task.delay(resendIndex * ResendGap.Value / 1000, function()
-													if not Killaura.Enabled or not entitylib.isAlive then
-														return
-													end
-													if not (resendTarget.Character and resendTarget.Character.Parent and entitylib.isVulnerable(resendTarget)) then
-														return
-													end
-													local handNow = lplr.Character and lplr.Character:FindFirstChild('HandInvItem')
-													if not (handNow and handNow.Value == weaponTool) then
-														return
-													end
-													local myRoot = entitylib.character and entitylib.character.RootPart
-													if not myRoot then
-														return
-													end
-													local resendSelf = myRoot.Position
-													local resendPosition = resendRoot.Position
-													if (resendPosition - resendSelf).Magnitude > serverRange then
-														return
-													end
-													local resendDirection = CFrame.lookAt(resendSelf, resendPosition).LookVector
-													pcall(function()
-														AttackRemote:FireServer({
-															weapon = weaponTool,
-															chargedAttack = {chargeRatio = 0},
-															entityInstance = resendTarget.Character,
-															validate = {
-																raycast = {
-																	cameraPosition = {value = resendSelf},
-																	cursorDirection = {value = resendDirection}
-																},
-																targetPosition = {value = resendPosition},
-																selfPosition = {value = resendSelf}
-															}
-														})
-													end)
-												end)
-											end
-											if SwingLog.Enabled then
-												local gap = now - lastSendTime
-												logStats.sends += 1
-												if lastSendTime > 0 and gap < 2 then
-													logStats.gapSum += gap
-													logStats.maxGap = math.max(logStats.maxGap, gap)
-												end
-												if lastSendTime > 0 and gap > attackInterval + 0.015 then
-													local reasons = {}
-													for name, count in pauseWhy do
-														table.insert(reasons, name .. '=' .. count)
-													end
-													table.sort(reasons)
-													local message = string.format('gap %dms, wanted %dms, fps %d | %s', math.floor(gap * 1000), math.floor(attackInterval * 1000), math.floor(workspace:GetRealPhysicsFPS()), #reasons > 0 and table.concat(reasons, ' ') or 'no reason found')
-													warn('[KillauraV2] ' .. message)
-												end
-												table.clear(pauseWhy)
-												lastSendTime = now
-											end
 										else
 											-- Do not wait out a full attack interval after a failed remote.
 											nextAttack = now + (1 / math.clamp(UpdateRate.Value, 60, 120))
-										end
-									elseif now >= nextAttack then
-										if not holdingSword then
-											noteReason('notHoldingSword')
-										elseif not targetAlive then
-											noteReason('targetNotVulnerable')
 										end
 									end
 								end
@@ -25007,8 +24628,13 @@ run(function()
 
 						for i, v in Particles do
 							local rootPart = attacked[i] and attacked[i].Entity.RootPart
-							v.Position = rootPart and rootPart.Position or Vector3.new(9e9, 9e9, 9e9)
-							v.Parent = rootPart and gameCamera or nil
+							local newParent = rootPart and gameCamera or nil
+							if rootPart then
+								v.Position = rootPart.Position
+							end
+							if v.Parent ~= newParent then
+								v.Parent = newParent
+							end
 						end
 
 						local faceRoot = attacked[1] and attacked[1].Entity.RootPart
@@ -25020,11 +24646,16 @@ run(function()
 					if not ok then
 						Attacking = false
 						store.KillauraTarget = nil
+						if os.clock() - lastErrorWarn > 5 then
+							lastErrorWarn = os.clock()
+							warn('[KillauraV2] ' .. tostring(err))
+						end
 					end
 
 					task.wait(1 / math.clamp(UpdateRate.Value * 4, 240, 1000))
-				until not Killaura.Enabled
+				until (not Killaura.Enabled) or runId ~= myRun
 			else
+				runId += 1
 				if oldFpsCap and setfpscap then
 					pcall(setfpscap, oldFpsCap)
 				end
@@ -25045,21 +24676,24 @@ run(function()
 						lplr.PlayerGui.MobileUI['2'].Visible = true
 					end)
 				end
-				if animationHooksInstalled and swordEffectFunction then
+				if animationHooksInstalled and swordEffectFunction and swordEffectController then
 					debug.setupvalue(swordEffectFunction, 6, swordEffectController)
 				end
-				if animationHooksInstalled and scytheAnimationFunction then
+				if animationHooksInstalled and scytheAnimationFunction and scytheAnimationController then
 					debug.setupvalue(scytheAnimationFunction, 3, scytheAnimationController)
 				end
 				swordEffectFunction, swordEffectController = nil, nil
 				scytheAnimationFunction, scytheAnimationController = nil, nil
 				animationHooksInstalled = false
-				if armC0 then
-					AnimTween = tweenService:Create(gameCamera.Viewmodel.RightHand.RightWrist, TweenInfo.new(AnimationTween.Enabled and 0.001 or 0.3, Enum.EasingStyle.Exponential), {
+				local wrist = getWrist()
+				if wrist and armC0 then
+					AnimTween = tweenService:Create(wrist, TweenInfo.new(AnimationTween.Enabled and 0.001 or 0.3, Enum.EasingStyle.Exponential), {
 						C0 = armC0
 					})
 					AnimTween:Play()
 				end
+				armC0 = nil
+				armWrist = nil
 			end
 		end,
 		Tooltip = 'Attack players around you\nwithout aiming at them.'
@@ -25109,7 +24743,7 @@ run(function()
 		Name = 'Attack attempts per 10s',
 		Min = 20,
 		Max = 600,
-		Default = 36,
+		Default = 35,
 		Suffix = ' hits',
 		Tooltip = 'Speed cap. Your sword cooldown sets the real max.'
 	})
@@ -25320,60 +24954,6 @@ run(function()
 	LegitAura = Killaura:CreateToggle({
 		Name = 'Swing only',
 		Tooltip = 'Only attacks while swinging manually'
-	})
-	SwingLog = Killaura:CreateToggle({
-		Name = 'Swing log',
-		Tooltip = 'Prints each pause between swings and the likely reason.\nTurn on to debug, then off.'
-	})
-	CapToCooldown = Killaura:CreateToggle({
-		Name = 'Cap to sword cooldown',
-		Tooltip = 'On: never swing faster than the sword cooldown (about 0.3s).\nOff: swing gap comes only from the slider. Faster swings than the cooldown get ignored by the server.'
-	})
-	SendGap = Killaura:CreateSlider({
-		Name = 'Min send gap',
-		Min = 0,
-		Max = 330,
-		Default = 285.7,
-		Decimal = 10,
-		Suffix = 'ms',
-		Tooltip = 'Shortest time between hit events. No other setting can go below it.\n285.7 is 35 hits per 10s. 30 is the old spam style, which gets rate limited (use attempts 600 and margin -8.7 for it). Too low and you get rate limited.'
-	})
-	ExtraSends = Killaura:CreateSlider({
-		Name = 'Extra sends',
-		Min = 0,
-		Max = 3,
-		Default = 0,
-		Tooltip = 'Resends each hit a moment later to fill small gaps.\n0 is off. 2 sends about 105 events per 10s. More can get you rate limited.'
-	})
-	ResendGap = Killaura:CreateSlider({
-		Name = 'Resend gap',
-		Min = 10,
-		Max = 120,
-		Default = 12,
-		Suffix = 'ms',
-		Tooltip = 'Time after the first send before each extra send.'
-	})
-	LockToHits = Killaura:CreateToggle({
-		Name = 'Hit lock',
-		Default = true,
-		Tooltip = 'Times each send from the last hit the server counted. Needs the target health to be readable. Falls back to Min send gap when it is not.'
-	})
-	ServerCooldown = Killaura:CreateSlider({
-		Name = 'Server cooldown',
-		Min = 270,
-		Max = 330,
-		Default = 278,
-		Decimal = 10,
-		Suffix = 'ms',
-		Tooltip = 'Hit lock starts probing this long after a counted hit. Too early only wastes a few events.'
-	})
-	ProbeStep = Killaura:CreateSlider({
-		Name = 'Probe step',
-		Min = 4,
-		Max = 40,
-		Default = 45,
-		Suffix = 'ms',
-		Tooltip = 'Time between sends. Never goes under 40. About 22 events per second at most.'
 	})
 
 	task.defer(function()
