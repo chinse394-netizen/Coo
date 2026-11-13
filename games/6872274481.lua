@@ -6034,6 +6034,19 @@ run(function()
 							targetinfo.Targets[plr] = tick() + 1
 							if plr.RootPart then
 								lastAim = {ent = plr, time = os.clock(), flight = (plr.RootPart.Position - offsetpos).Magnitude / projSpeed}
+								if AccuracyLog.Enabled then
+									-- One console line per shot, so misses can be matched to range, speed and lead.
+									local rootVelocity = plr.RootPart.AssemblyLinearVelocity
+									warn(string.format(
+										'[ProjectileAimbot] range %d studs, target speed %.1f, flight %.2fs, lead %dms, ping %dms, arrow speed %d',
+										(plr.RootPart.Position - offsetpos).Magnitude,
+										Vector3.new(rootVelocity.X, 0, rootVelocity.Z).Magnitude,
+										lastAim.flight,
+										lead * 1000,
+										getPingSeconds() * 1000,
+										projSpeed
+									))
+								end
 							end
 							return {
 								initialVelocity = direction * projSpeed,
