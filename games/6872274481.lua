@@ -6013,6 +6013,10 @@ run(function()
 						if not direction and plr.RootPart and plr.Player and not isTelepearl then
 							local profile = profiles[plr.Player]
 							local reaction = (profile and LearnMoves.Enabled) and getReactionFactor(profile, now) or 1
+							-- Straight movers keep their speed. Only damp the lead when a real pattern was seen.
+							if profile and not getStrafePattern(profile, now) and not getHopPattern(profile, now) then
+								reaction = 1
+							end
 							local ratio = 1
 							if profile and LearnMoves.Enabled and JukeGuard.Enabled and not isArrow and reaction == 1 and not getStrafePattern(profile, now) then
 								local flightGuess = ((plr.RootPart.Position - offsetpos).Magnitude / projSpeed) + lead
@@ -6518,9 +6522,9 @@ run(function()
 					local Icon = Instance.new('ImageLabel')
 					Icon.Name = 'RankIcon'
 					Icon.Size = UDim2.fromOffset(30, 30)
-					Icon.Position = UDim2.fromOffset(size.X + 10, -4)
+					Icon.Position = UDim2.new(1, 10, 0, -4)
 					Icon.BackgroundTransparency = 1
-					Icon.Image = store.rank[ent.Player]:async() and bedwars.RankMeta[store.rank[ent.Player]:async()].image or ''
+					Icon.Image = (store.rank and store.rank[ent.Player] and store.rank[ent.Player]:async() and bedwars.RankMeta and bedwars.RankMeta[store.rank[ent.Player]:async()] and bedwars.RankMeta[store.rank[ent.Player]:async()].image) or ''
 					Icon.Parent = nametag
 				end
 			end)
@@ -6532,7 +6536,7 @@ run(function()
 					Icon.Size = UDim2.fromOffset(30, 30)
 					Icon.Position = UDim2.fromOffset(-30, -4)
 					Icon.BackgroundTransparency = 1
-					Icon.Image = store.enchants[ent.Player]:async() or ''
+					Icon.Image = (store.enchants and store.enchants[ent.Player] and store.enchants[ent.Player]:async()) or ''
 					Icon.Parent = nametag
 				end
 			end)
@@ -6644,7 +6648,7 @@ run(function()
 				end
 				
 				if Enchant.Enabled and nametag:FindFirstChild('EnchantIcon') then
-					nametag.EnchantIcon.Image = store.enchants[ent.Player]:async() or ''
+					nametag.EnchantIcon.Image = (store.enchants and store.enchants[ent.Player] and store.enchants[ent.Player]:async()) or ''
 				end
 	
 				local size = getfontsize(removeTags(Strings[ent]), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
@@ -7077,9 +7081,9 @@ run(function()
 					local Icon = Instance.new('ImageLabel')
 					Icon.Name = 'RankIcon'
 					Icon.Size = UDim2.fromOffset(30, 30)
-					Icon.Position = UDim2.fromOffset(size.X + 10, -4)
+					Icon.Position = UDim2.new(1, 10, 0, -4)
 					Icon.BackgroundTransparency = 1
-					Icon.Image = store.rank[ent.Player]:async() and bedwars.RankMeta[store.rank[ent.Player]:async()].image or ''
+					Icon.Image = (store.rank and store.rank[ent.Player] and store.rank[ent.Player]:async() and bedwars.RankMeta and bedwars.RankMeta[store.rank[ent.Player]:async()] and bedwars.RankMeta[store.rank[ent.Player]:async()].image) or ''
 					Icon.Parent = nametag
 				end
 			end)
@@ -7091,7 +7095,7 @@ run(function()
 					Icon.Size = UDim2.fromOffset(30, 30)
 					Icon.Position = UDim2.fromOffset(-30, -4)
 					Icon.BackgroundTransparency = 1
-					Icon.Image = store.enchants[ent.Player]:async() or ''
+					Icon.Image = (store.enchants and store.enchants[ent.Player] and store.enchants[ent.Player]:async()) or ''
 					Icon.Parent = nametag
 				end
 			end)
@@ -7208,7 +7212,7 @@ run(function()
 				end
 				
 				if Enchant.Enabled and nametag:FindFirstChild('EnchantIcon') then
-					nametag.EnchantIcon.Image = store.enchants[ent.Player]:async() or ''
+					nametag.EnchantIcon.Image = (store.enchants and store.enchants[ent.Player] and store.enchants[ent.Player]:async()) or ''
 				end
 	
 				local size = getfontsize(removeTags(Strings[ent]), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
@@ -24697,8 +24701,11 @@ run(function()
 				-- last hit the server really counted, instead of a free running clock.
 				local acceptedAt = 0
 				local lastSwingFx = 0
-				local denseProbes = 0
 				local sendTimes = {}
+				-- One event per hit. pendingSend is the time of the send we are waiting on.
+				-- learnedCooldown is the real server cooldown, found by trial.
+				local pendingSend = 0
+				local learnedCooldown = 0.278
 				local lockedChar = nil
 				local lockedHealth = nil
 				local lockedConnection = nil
@@ -24719,10 +24726,15 @@ run(function()
 						local health = character:GetAttribute('Health')
 						if type(health) == 'number' and type(lockedHealth) == 'number' and health < lockedHealth then
 							acceptedAt = tick()
-							denseProbes = 1
-							-- The server counted the hit about one ping ago, and our next event needs one ping to arrive.
-							local ping = lplr:GetNetworkPing()
-							nextAttack = acceptedAt + (math.max(ServerCooldown.Value, 270) / 1000) - (ping * 2)
+							local sendAt = pendingSend
+							pendingSend = 0
+							if sendAt > 0 then
+								-- That send was on time, so the gap can creep back down toward the real cooldown.
+								learnedCooldown = math.max(learnedCooldown - 0.002, 0.27)
+								-- The server starts the cooldown when our event arrives, so timing the next
+								-- send from our own send time needs no ping guess at all.
+								nextAttack = sendAt + learnedCooldown + 0.002
+							end
 						end
 						lockedHealth = health
 					end)
@@ -24773,6 +24785,15 @@ run(function()
 				local lastTool
 				repeat
 					local attacked = {}
+					-- A send that draws no damage within one ping was too early: the server
+					-- cooldown had not ended yet. Learn from it and retry soon.
+					if pendingSend > 0 then
+						if tick() - pendingSend > lplr:GetNetworkPing() + 0.05 then
+							pendingSend = 0
+							learnedCooldown = math.min(learnedCooldown + 0.004, 0.34)
+							nextAttack = math.min(nextAttack, tick() + 0.035)
+						end
+					end
 					local ok = pcall(function()
 						local sword, meta = getAttackData()
 						if not sword then
@@ -24850,31 +24871,27 @@ run(function()
 										-- Probe mode: an event every few ms near the server edge, with hard limits
 										-- so the server rate limit can never be reached (about 22 events per second at most).
 										lockTo(v.Character)
-										local probe = math.max(ProbeStep.Value, 40) / 1000
-										-- Right at the server edge, probe every 7ms for 1 extra send (2 events per hit) so the hit
-										-- lands within a few ms of the cooldown ending.
-										if LockToHits.Enabled and (tick() - acceptedAt) < 1 then
-											if denseProbes > 0 then
-												denseProbes -= 1
-												probe = 0.007
-											else
-												probe = 0.04
-											end
+										-- One event per hit. While hits are landing, the next send is timed
+										-- from the send that the server counted, so nothing is wasted.
+										local interval = weaponInterval
+										if LockToHits.Enabled and acceptedAt > 0 and (now - acceptedAt) < 2 then
+											interval = learnedCooldown
 										end
-										-- Event budget over the last 10 seconds. Normal fighting uses about 100.
-										-- When nothing is being counted (target out of reach, blocked, or the server
-										-- ignores the hits) it falls back to one event per cooldown, so a long fight
-										-- never floods the server and desyncs you.
+										interval = math.max(interval, 0.03)
+										-- Event budget over the last 10 seconds. A clean fight uses about 40.
+										-- If nothing is being counted it falls back to one event per cooldown,
+										-- so a long fight never floods the server and desyncs you.
 										local cutoff = now - 10
 										while sendTimes[1] and sendTimes[1] < cutoff do
 											table.remove(sendTimes, 1)
 										end
 										table.insert(sendTimes, now)
-										if #sendTimes >= 110 then
-											probe = math.max(probe, 0.2857)
+										if #sendTimes >= 80 then
+											interval = math.max(interval, 0.2857)
 										end
-										nextAttack = now + probe
-										local attackInterval = probe
+										nextAttack = now + interval
+										pendingSend = now
+										local attackInterval = interval
 										-- Events go out often, but the swing animation only plays once per
 										-- cooldown, so there are no swings that the server ignored.
 										local playSwing = (now - lastSwingFx) >= 0.26
