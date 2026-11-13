@@ -6105,7 +6105,7 @@ run(function()
 		Name = 'Long range damping',
 		Min = 0,
 		Max = 100,
-		Default = 25,
+		Default = 0,
 		Suffix = '%',
 		Tooltip = 'Trusts the target speed a bit less on long shots. Max 30 percent less.\n0 turns it off.'
 	})
