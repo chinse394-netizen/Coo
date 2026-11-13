@@ -5286,6 +5286,7 @@ run(function()
 	local AccuracyLog
 	local LongRange
 	local LeadTune
+	local AllowLobs
 	local lastAim
 	local shotStats = {hits = 0, total = 0}
 	local ProjectileAimbot
@@ -5820,7 +5821,8 @@ run(function()
 			end
 		end
 
-		for arcIndex = 1, 2 do
+		-- Arc 1 is the direct shot. Arc 2 is the high lob, which stays in the air long enough for a moving player to dodge.
+		for arcIndex = 1, (AllowLobs.Enabled and 2 or 1) do
 			for index = 1, #offsets do
 				local arc = allArcs[index][arcIndex]
 				if arc and not getBlockedTime(origin, arc.direction, speed, gravity, arc.time) then
@@ -6119,6 +6121,11 @@ run(function()
 		Name = 'Smooth velocity',
 		Default = true,
 		Tooltip = 'Mixes the replicated speed with the speed seen on your screen.\nTurn off if shots get worse.'
+	})
+	AllowLobs = ProjectileAimbot:CreateToggle({
+		Name = 'Allow lob shots',
+		Default = false,
+		Tooltip = 'When a wall blocks the direct shot, aim high over it.\nLobs fly for a long time and moving players dodge them. Off is more accurate.'
 	})
 	LeadTune = ProjectileAimbot:CreateSlider({
 		Name = 'Lead tune',
