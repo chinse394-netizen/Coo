@@ -24834,14 +24834,17 @@ run(function()
 												probe = 0.04
 											end
 										end
-										local cutoff = now - 1
+										-- Event budget over the last 10 seconds. Normal fighting uses about 100.
+										-- When nothing is being counted (target out of reach, blocked, or the server
+										-- ignores the hits) it falls back to one event per cooldown, so a long fight
+										-- never floods the server and desyncs you.
+										local cutoff = now - 10
 										while sendTimes[1] and sendTimes[1] < cutoff do
 											table.remove(sendTimes, 1)
 										end
 										table.insert(sendTimes, now)
-										if #sendTimes >= 22 then
-											-- Over budget: slow down a little, never stop.
-											probe = math.max(probe, 0.06)
+										if #sendTimes >= 110 then
+											probe = math.max(probe, 0.2857)
 										end
 										nextAttack = now + probe
 										local attackInterval = probe
