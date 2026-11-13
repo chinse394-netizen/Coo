@@ -24724,22 +24724,31 @@ run(function()
 					end
 					lockedConnection = character:GetAttributeChangedSignal('Health'):Connect(function()
 						local health = character:GetAttribute('Health')
-						if type(health) == 'number' and type(lockedHealth) == 'number' and health < lockedHealth then
-							acceptedAt = tick()
-							local sendAt = pendingSend
-							pendingSend = 0
-							if sendAt > 0 then
-								-- That send was on time, so the gap can creep back down toward the real cooldown.
-								learnedCooldown = math.max(learnedCooldown - 0.002, 0.27)
-								-- The server starts the cooldown when our event arrives, so timing the next
-								-- send from our own send time needs no ping guess at all.
-								nextAttack = sendAt + learnedCooldown + 0.002
-							end
-						end
 						lockedHealth = health
 					end)
 					Killaura:Clean(lockedConnection)
 				end
+				-- The server tells us when a hit really counted. This is the true hit
+				-- register signal and it works on dummies that heal themselves instantly.
+				Killaura:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
+					if damageTable.fromEntity ~= lplr.Character then
+						return
+					end
+					if damageTable.entityInstance == lplr.Character then
+						return
+					end
+					local sendAt = pendingSend
+					if sendAt <= 0 then
+						return
+					end
+					acceptedAt = tick()
+					pendingSend = 0
+					-- That send was on time, so the gap can creep back down toward the real cooldown.
+					learnedCooldown = math.max(learnedCooldown - 0.002, 0.25)
+					-- The server starts the cooldown when our event arrives, so timing the next
+					-- send from our own send time needs no ping guess at all.
+					nextAttack = sendAt + learnedCooldown + 0.002
+				end))
 				local lastSendTime = 0
 				local pauseWhy = {}
 				-- Counts why swings were skipped, only while Swing log is on.
@@ -24787,11 +24796,14 @@ run(function()
 					local attacked = {}
 					-- A send that draws no damage within one ping was too early: the server
 					-- cooldown had not ended yet. Learn from it and retry soon.
-					if pendingSend > 0 then
-						if tick() - pendingSend > lplr:GetNetworkPing() + 0.05 then
-							pendingSend = 0
+					if pendingSend > 0 and tick() - pendingSend > lplr:GetNetworkPing() + 0.12 then
+						-- Only retry while the server is actually counting hits. If nothing is
+						-- registering, keep the normal gap so the rate limit is never reached.
+						local counting = acceptedAt > 0 and (pendingSend - acceptedAt) < 2
+						pendingSend = 0
+						if counting then
 							learnedCooldown = math.min(learnedCooldown + 0.004, 0.34)
-							nextAttack = math.min(nextAttack, tick() + 0.035)
+							nextAttack = math.min(nextAttack, tick() + 0.04)
 						end
 					end
 					local ok = pcall(function()
@@ -24886,7 +24898,7 @@ run(function()
 											table.remove(sendTimes, 1)
 										end
 										table.insert(sendTimes, now)
-										if #sendTimes >= 80 then
+										if #sendTimes >= 60 then
 											interval = math.max(interval, 0.2857)
 										end
 										nextAttack = now + interval
