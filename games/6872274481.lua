@@ -24701,11 +24701,8 @@ run(function()
 				-- last hit the server really counted, instead of a free running clock.
 				local acceptedAt = 0
 				local lastSwingFx = 0
+				local denseProbes = 0
 				local sendTimes = {}
-				-- One event per hit. pendingSend is the time of the send we are waiting on.
-				-- learnedCooldown is the real server cooldown, found by trial.
-				local pendingSend = 0
-				local learnedCooldown = 0.278
 				local lockedChar = nil
 				local lockedHealth = nil
 				local lockedConnection = nil
@@ -24724,31 +24721,17 @@ run(function()
 					end
 					lockedConnection = character:GetAttributeChangedSignal('Health'):Connect(function()
 						local health = character:GetAttribute('Health')
+						if type(health) == 'number' and type(lockedHealth) == 'number' and health < lockedHealth then
+							acceptedAt = tick()
+							denseProbes = 1
+							-- The server counted the hit about one ping ago, and our next event needs one ping to arrive.
+							local ping = lplr:GetNetworkPing()
+							nextAttack = acceptedAt + (math.max(ServerCooldown.Value, 270) / 1000) - (ping * 2)
+						end
 						lockedHealth = health
 					end)
 					Killaura:Clean(lockedConnection)
 				end
-				-- The server tells us when a hit really counted. This is the true hit
-				-- register signal and it works on dummies that heal themselves instantly.
-				Killaura:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
-					if damageTable.fromEntity ~= lplr.Character then
-						return
-					end
-					if damageTable.entityInstance == lplr.Character then
-						return
-					end
-					local sendAt = pendingSend
-					if sendAt <= 0 then
-						return
-					end
-					acceptedAt = tick()
-					pendingSend = 0
-					-- That send was on time, so the gap can creep back down toward the real cooldown.
-					learnedCooldown = math.max(learnedCooldown - 0.002, 0.25)
-					-- The server starts the cooldown when our event arrives, so timing the next
-					-- send from our own send time needs no ping guess at all.
-					nextAttack = sendAt + learnedCooldown + 0.002
-				end))
 				local lastSendTime = 0
 				local pauseWhy = {}
 				-- Counts why swings were skipped, only while Swing log is on.
@@ -24794,18 +24777,6 @@ run(function()
 				local lastTool
 				repeat
 					local attacked = {}
-					-- A send that draws no damage within one ping was too early: the server
-					-- cooldown had not ended yet. Learn from it and retry soon.
-					if pendingSend > 0 and tick() - pendingSend > lplr:GetNetworkPing() + 0.12 then
-						-- Only retry while the server is actually counting hits. If nothing is
-						-- registering, keep the normal gap so the rate limit is never reached.
-						local counting = acceptedAt > 0 and (pendingSend - acceptedAt) < 2
-						pendingSend = 0
-						if counting then
-							learnedCooldown = math.min(learnedCooldown + 0.004, 0.34)
-							nextAttack = math.min(nextAttack, tick() + 0.04)
-						end
-					end
 					local ok = pcall(function()
 						local sword, meta = getAttackData()
 						if not sword then
@@ -24883,27 +24854,31 @@ run(function()
 										-- Probe mode: an event every few ms near the server edge, with hard limits
 										-- so the server rate limit can never be reached (about 22 events per second at most).
 										lockTo(v.Character)
-										-- One event per hit. While hits are landing, the next send is timed
-										-- from the send that the server counted, so nothing is wasted.
-										local interval = weaponInterval
-										if LockToHits.Enabled and acceptedAt > 0 and (now - acceptedAt) < 2 then
-											interval = learnedCooldown
+										local probe = math.max(ProbeStep.Value, 40) / 1000
+										-- Right at the server edge, probe every 7ms for 1 extra send (2 events per hit) so the hit
+										-- lands within a few ms of the cooldown ending.
+										if LockToHits.Enabled and (tick() - acceptedAt) < 1 then
+											if denseProbes > 0 then
+												denseProbes -= 1
+												probe = 0.007
+											else
+												probe = 0.04
+											end
 										end
-										interval = math.max(interval, 0.03)
-										-- Event budget over the last 10 seconds. A clean fight uses about 40.
-										-- If nothing is being counted it falls back to one event per cooldown,
-										-- so a long fight never floods the server and desyncs you.
+										-- Event budget over the last 10 seconds. Normal fighting uses about 100.
+										-- When nothing is being counted (target out of reach, blocked, or the server
+										-- ignores the hits) it falls back to one event per cooldown, so a long fight
+										-- never floods the server and desyncs you.
 										local cutoff = now - 10
 										while sendTimes[1] and sendTimes[1] < cutoff do
 											table.remove(sendTimes, 1)
 										end
 										table.insert(sendTimes, now)
-										if #sendTimes >= 60 then
-											interval = math.max(interval, 0.2857)
+										if #sendTimes >= 110 then
+											probe = math.max(probe, 0.2857)
 										end
-										nextAttack = now + interval
-										pendingSend = now
-										local attackInterval = interval
+										nextAttack = now + probe
+										local attackInterval = probe
 										-- Events go out often, but the swing animation only plays once per
 										-- cooldown, so there are no swings that the server ignored.
 										local playSwing = (now - lastSwingFx) >= 0.26
