@@ -5872,8 +5872,10 @@ run(function()
 								local aim = lastAim
 								-- One console line per real shot.
 								warn(string.format(
-									'[ProjectileAimbot] range %d studs, target speed %.1f, flight %.2fs, lead %dms, ping %dms, arrow speed %d',
+									'[ProjectileAimbot] range %d studs, speed seen %.1f, speed used %.1f, speed from game %.1f, flight %.2fs, lead %dms, ping %dms, arrow speed %d',
 									math.floor(aim.range),
+									aim.replicatedSpeed,
+									aim.usedSpeed,
 									aim.speed,
 									aim.flight,
 									math.floor(aim.lead * 1000),
@@ -5974,6 +5976,7 @@ run(function()
 
 						local isTelepearl = projmeta.projectile == 'telepearl'
 						local velocity = targetPart.AssemblyLinearVelocity or targetPart.Velocity or Vector3.zero
+						local replicatedSpeed = flatten(velocity).Magnitude
 						local trackedProfile = plr.Player and profiles[plr.Player]
 						if SmoothVel.Enabled and trackedProfile then
 							local tracked = trackedProfile.samples[#trackedProfile.samples]
@@ -5981,6 +5984,7 @@ run(function()
 								velocity = tracked.v
 							end
 						end
+						local usedSpeed = flatten(velocity).Magnitude
 						local scale = VelocityPrediction.Value / 100
 						-- Long flights: players rarely keep one speed for a full second, so trust the
 						-- current speed a little less the longer the arrow is in the air.
@@ -6061,7 +6065,9 @@ run(function()
 									range = (plr.RootPart.Position - offsetpos).Magnitude,
 									speed = Vector3.new(plr.RootPart.AssemblyLinearVelocity.X, 0, plr.RootPart.AssemblyLinearVelocity.Z).Magnitude,
 									lead = lead,
-									arrowSpeed = projSpeed
+									arrowSpeed = projSpeed,
+									replicatedSpeed = replicatedSpeed,
+									usedSpeed = usedSpeed
 								}
 							end
 							return {
