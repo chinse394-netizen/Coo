@@ -5276,6 +5276,8 @@ run(function()
 	local JukeGuard
 	local SmoothVel
 	local AccuracyLog
+	local SmoothAim
+	local StickyTarget
 	local lastAim
 	local shotStats = {hits = 0, total = 0}
 	local ProjectileAimbot
@@ -5283,6 +5285,27 @@ run(function()
 	local frameTime = 1 / 60
 	local profiles = setmetatable({}, {__mode = 'k'})
 	local simCache = setmetatable({}, {__mode = 'k'})
+	local aimMemory = setmetatable({}, {__mode = 'k'})
+	local stickyEnt
+	local stickyTime = 0
+	local smoothPing
+	local lastPingRead = 0
+	-- How fast the velocity filter follows new data (seconds).
+	local VEL_TAU = 0.05
+	-- How fast the acceleration filter follows new data (seconds).
+	local ACC_TAU = 0.1
+	-- Max horizontal acceleration we trust (studs/s^2).
+	local MAX_ACC = 60
+	-- Window used to work out speed from position (seconds).
+	local FIT_WINDOW = 0.12
+	-- How fast the aim output settles (seconds).
+	local AIM_TAU = 0.04
+	-- Aim changes bigger than this snap right away (degrees).
+	local AIM_SNAP_DEG = 1.5
+	-- Time to swap from one strafe side to the other (seconds).
+	local FLIP_TIME = 0.08
+	-- How long a target stays locked after you last aimed at it (seconds).
+	local STICKY_TIME = 0.35
 	local JUMP_VELOCITY = 42.6
 	local SIM_STEP = 1 / 60
 	local SIM_STEPS = 132
@@ -5298,14 +5321,71 @@ run(function()
 		hasMap = map ~= nil
 	end
 
-	local function getPingSeconds()
+	local function readPingSeconds()
 		local success, value = pcall(function()
 			return game:GetService('Stats').Network.ServerStatsItem['Data Ping']:GetValue()
 		end)
 		if success and type(value) == 'number' then
 			return value / 1000
 		end
-		return 0
+		return nil
+	end
+
+	-- Ping jumps around a lot. Smooth it so the lead does not twitch.
+	local function getPingSeconds()
+		local now = os.clock()
+		if now - lastPingRead >= 0.25 then
+			local dt = smoothPing and (now - lastPingRead) or 0
+			lastPingRead = now
+			local raw = readPingSeconds()
+			if raw then
+				if not smoothPing or dt > 3 then
+					smoothPing = raw
+				else
+					local alpha = 1 - math.exp(-dt / 1)
+					smoothPing += (raw - smoothPing) * alpha
+				end
+			end
+		end
+		return smoothPing or 0
+	end
+
+	-- Fraction to move toward new data, based on time passed.
+	local function blend(dt, tau)
+		return 1 - math.exp(-math.max(dt, 0) / tau)
+	end
+
+	-- Fits a line through recent positions to get a clean speed.
+	local function fitVelocity(samples, now, pos)
+		local sumT, sumX, sumZ, sumTT, sumTX, sumTZ, n = 0, 0, 0, 0, 0, 0, 0
+		local function add(t, p)
+			sumT += t
+			sumX += p.X
+			sumZ += p.Z
+			sumTT += t * t
+			sumTX += t * p.X
+			sumTZ += t * p.Z
+			n += 1
+		end
+		add(0, pos)
+		for index = #samples, 1, -1 do
+			local sample = samples[index]
+			local t = sample.t - now
+			if t < -FIT_WINDOW then
+				break
+			end
+			add(t, sample.p)
+		end
+		if n < 3 then
+			return nil
+		end
+		local denom = n * sumTT - sumT * sumT
+		if math.abs(denom) < 1e-6 then
+			return nil
+		end
+		local vx = (n * sumTX - sumT * sumX) / denom
+		local vz = (n * sumTZ - sumT * sumZ) / denom
+		return Vector3.new(vx, 0, vz)
 	end
 
 	local function getLeadTime()
@@ -5345,7 +5425,10 @@ run(function()
 				pending = nil,
 				reactions = {},
 				ratios = {{}, {}, {}},
-				lastRatioTime = 0
+				lastRatioTime = 0,
+				fvel = nil,
+				facc = Vector3.zero,
+				filterTime = 0
 			}
 			profiles[player] = profile
 		end
@@ -5415,16 +5498,38 @@ run(function()
 
 		local trackedVel = vel
 		if SmoothVel.Enabled then
-			for index = #samples, 1, -1 do
-				local gap = now - samples[index].t
-				if gap >= 0.08 then
-					if gap <= 0.3 then
-						local derived = (pos - samples[index].p) / gap
-						trackedVel = Vector3.new((vel.X + derived.X) / 2, vel.Y, (vel.Z + derived.Z) / 2)
-					end
-					break
-				end
+			-- Mix the replicated speed with the speed seen from position changes.
+			local rawFlat = flat
+			local fitted = fitVelocity(samples, now, pos)
+			-- Skip the fit after a teleport or respawn, it gives a fake huge speed.
+			if fitted and fitted.Magnitude < 80 then
+				rawFlat = (rawFlat + fitted) * 0.5
 			end
+
+			local dt = now - profile.filterTime
+			local prev = profile.fvel
+			if not prev or dt > 0.5 then
+				profile.fvel = rawFlat
+				profile.facc = Vector3.zero
+			else
+				-- A hard turn resets the filter so it does not lag behind jukes.
+				local reversed = prev.Magnitude > 4 and rawFlat.Magnitude > 4 and prev.Unit:Dot(rawFlat.Unit) < 0
+				local newVel
+				if reversed then
+					newVel = rawFlat
+					profile.facc = Vector3.zero
+				else
+					newVel = prev:Lerp(rawFlat, blend(dt, VEL_TAU))
+					if dt > 0 then
+						local acc = (newVel - prev) / dt
+						acc = Vector3.new(math.clamp(acc.X, -MAX_ACC, MAX_ACC), 0, math.clamp(acc.Z, -MAX_ACC, MAX_ACC))
+						profile.facc = profile.facc:Lerp(acc, blend(dt, ACC_TAU))
+					end
+				end
+				profile.fvel = newVel
+			end
+			profile.filterTime = now
+			trackedVel = Vector3.new(profile.fvel.X, vel.Y, profile.fvel.Z)
 		end
 		pushLimited(samples, {t = now, p = pos, v = trackedVel}, 80)
 		updateRatios(profile, now, pos)
@@ -5633,12 +5738,18 @@ run(function()
 		end
 
 		local path = {pos}
+		local flipTarget = hVel
+		local flipAlpha = math.clamp(SIM_STEP / FLIP_TIME, 0, 1)
 		for step = 1, SIM_STEPS do
 			local t = step * SIM_STEP
 
 			if nextFlip and now + t >= nextFlip then
-				hVel = -hVel
+				flipTarget = -flipTarget
 				nextFlip += strafe.period
+			end
+			-- Turn around over a short time instead of in one frame.
+			if hVel ~= flipTarget then
+				hVel = hVel:Lerp(flipTarget, flipAlpha)
 			end
 			local ramp = math.clamp(t / 0.4, 0, 1)
 			local moveH = hVel * (1 + (reactionFactor - 1) * ramp)
@@ -5664,8 +5775,24 @@ run(function()
 				if flatMove.Magnitude > 0.01 then
 					local wall = workspace:Raycast(pos, flatMove.Unit * (flatMove.Magnitude + 1.2), rayCheck)
 					if wall then
-						newPos = Vector3.new(pos.X, newPos.Y, pos.Z)
-						hVel = Vector3.zero
+						-- Slide along the wall like a real player instead of stopping dead.
+						local normal = Vector3.new(wall.Normal.X, 0, wall.Normal.Z)
+						local slide = Vector3.zero
+						if normal.Magnitude > 0.01 then
+							normal = normal.Unit
+							slide = flatMove - normal * flatMove:Dot(normal)
+							if slide.Magnitude > 0.01 and workspace:Raycast(pos, slide.Unit * (slide.Magnitude + 1.2), rayCheck) then
+								slide = Vector3.zero
+							end
+						end
+						newPos = Vector3.new(pos.X + slide.X, newPos.Y, pos.Z + slide.Z)
+						if normal.Magnitude > 0.01 then
+							hVel = hVel - normal * hVel:Dot(normal)
+							flipTarget = flipTarget - normal * flipTarget:Dot(normal)
+						else
+							hVel = Vector3.zero
+							flipTarget = Vector3.zero
+						end
 					end
 				end
 
@@ -5885,14 +6012,34 @@ run(function()
 				old = bedwars.ProjectileController.calculateImportantLaunchValues
 				bedwars.ProjectileController.calculateImportantLaunchValues = function(...)
 					local self, projmeta, worldmeta, origin, shootpos = ...
-					local plr = entitylib.EntityMouse({
-						Part = 'RootPart',
-						Range = FOV.Value,
-						Players = Targets.Players.Enabled,
-						NPCs = Targets.NPCs.Enabled,
-						Wallcheck = Targets.Walls.Enabled,
-						Origin = entitylib.isAlive and (shootpos or entitylib.character.RootPart.Position) or Vector3.zero
-					})
+					local plr
+					-- Keep the same target for a moment so the aim does not jump between people.
+					if StickyTarget.Enabled and stickyEnt and os.clock() - stickyTime < STICKY_TIME then
+						local ent = stickyEnt
+						local valid = table.find(entitylib.List, ent) ~= nil
+							and ent.Targetable
+							and ent.RootPart ~= nil
+							and ent.RootPart.Parent ~= nil
+							and entitylib.isVulnerable(ent)
+							and ((ent.Player and Targets.Players.Enabled) or (ent.NPC and Targets.NPCs.Enabled))
+						if valid then
+							local screen, visible = gameCamera:WorldToViewportPoint(ent.RootPart.Position)
+							local mouse = inputService.TouchEnabled and gameCamera.ViewportSize / 2 or inputService:GetMouseLocation()
+							if visible and (mouse - Vector2.new(screen.X, screen.Y)).Magnitude <= FOV.Value * 1.3 then
+								plr = ent
+							end
+						end
+					end
+					if not plr then
+						plr = entitylib.EntityMouse({
+							Part = 'RootPart',
+							Range = FOV.Value,
+							Players = Targets.Players.Enabled,
+							NPCs = Targets.NPCs.Enabled,
+							Wallcheck = Targets.Walls.Enabled,
+							Origin = entitylib.isAlive and (shootpos or entitylib.character.RootPart.Position) or Vector3.zero
+						})
+					end
 
 					if plr then
 						local pos = shootpos or self:getLaunchPosition(origin)
@@ -5956,18 +6103,14 @@ run(function()
 						end
 						local scale = VelocityPrediction.Value / 100
 						velocity = Vector3.new(velocity.X * scale, velocity.Y, velocity.Z * scale)
-		local profileSamples = plr.Player and profiles[plr.Player] and profiles[plr.Player].samples
-		local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
-		if profileSamples and #profileSamples >= 3 and os.clock() - profileSamples[#profileSamples].t < 0.12 then
-			local newest = profileSamples[#profileSamples]
-			local previous = profileSamples[#profileSamples - 1]
-			local older = profileSamples[#profileSamples - 2]
-			local dtNew = math.max(newest.t - previous.t, 0.01)
-			local dtOld = math.max(previous.t - older.t, 0.01)
-			local acceleration = ((newest.v - previous.v) / dtNew + (previous.v - older.v) / dtOld) * 0.5
-			acceleration = Vector3.new(math.clamp(acceleration.X, -120, 120), math.clamp(acceleration.Y, -80, 80), math.clamp(acceleration.Z, -120, 120))
-			velocity += acceleration * math.clamp(getLeadTime(), 0, 0.25)
-		end
+						local isArrow = projmeta.projectile:find('arrow', 1, true) ~= nil
+						-- Add the filtered sideways speed-up only.
+						-- The old code also added falling speed, so gravity got counted twice
+						-- and shots went low on jumping players.
+						if SmoothVel.Enabled and trackedProfile and trackedProfile.facc and os.clock() - trackedProfile.filterTime < 0.12 then
+							local acc = trackedProfile.facc
+							velocity += Vector3.new(acc.X, 0, acc.Z) * math.clamp(getLeadTime(), 0, 0.15)
+						end
 						if isTelepearl then
 							velocity = Vector3.zero
 						end
@@ -6021,7 +6164,26 @@ run(function()
 							direction = libraryAim and (libraryAim - offsetpos).Unit
 						end
 
+						if direction and SmoothAim.Enabled then
+							-- Settle small aim changes over a few frames so the aim line does not shake.
+							-- Big changes snap right away so real moves are never missed.
+							local memory = aimMemory[plr]
+							local clockNow = os.clock()
+							if memory and memory.projectile == projmeta.projectile and clockNow - memory.t < 0.15 then
+								local angle = math.deg(math.acos(math.clamp(memory.dir:Dot(direction), -1, 1)))
+								if angle <= AIM_SNAP_DEG then
+									local mixed = memory.dir:Lerp(direction, blend(clockNow - memory.t, AIM_TAU))
+									if mixed.Magnitude > 0.01 then
+										direction = mixed.Unit
+									end
+								end
+							end
+							aimMemory[plr] = {dir = direction, t = clockNow, projectile = projmeta.projectile}
+						end
+
 						if direction then
+							stickyEnt = plr
+							stickyTime = os.clock()
 							targetinfo.Targets[plr] = tick() + 1
 							if plr.RootPart then
 								lastAim = {ent = plr, time = os.clock(), flight = (plr.RootPart.Position - offsetpos).Magnitude / projSpeed}
@@ -6040,6 +6202,9 @@ run(function()
 				end
 			else
 				bedwars.ProjectileController.calculateImportantLaunchValues = old
+				stickyEnt = nil
+				stickyTime = 0
+				table.clear(aimMemory)
 			end
 		end,
 		Tooltip = 'Silently adjusts your aim towards the enemy'
@@ -6111,6 +6276,16 @@ run(function()
 		Default = 60,
 		Suffix = 'ms',
 		Tooltip = 'How far behind other players look on your screen.\nRaise it if shots land behind moving targets.'
+	})
+	SmoothAim = ProjectileAimbot:CreateToggle({
+		Name = 'Smooth aim',
+		Default = true,
+		Tooltip = 'Stops tiny aim shakes between frames.\nBig changes still snap right away.'
+	})
+	StickyTarget = ProjectileAimbot:CreateToggle({
+		Name = 'Sticky target',
+		Default = true,
+		Tooltip = 'Keeps aiming at the same player for a moment\ninstead of jumping to whoever is closest to your mouse.'
 	})
 end)
 	
