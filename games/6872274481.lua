@@ -8692,33 +8692,68 @@ run(function()
 	local Range
 	local Network
 	local Lower
-	
+
+	-- Only pull drops this close with Network TP.
+	-- Pulling every drop on the map made you own and send all of them.
+	local NETWORK_RANGE = 20
+	-- Seconds to wait before asking for the same drop again.
+	local RETRY_DELAY = 0.5
+	-- Most pickup requests sent each tick.
+	local MAX_PER_TICK = 6
+
 	PickupRange = vape.Categories.Utility:CreateModule({
 		Name = 'PickupRange',
 		Function = function(callback)
 			if callback then
 				local items = collection('ItemDrop', PickupRange)
+				local nextTry = setmetatable({}, {__mode = 'k'})
 				repeat
-					if entitylib.isAlive then
+					if entitylib.isAlive and entitylib.character.Humanoid.Health > 0 then
 						local localPosition = entitylib.character.RootPart.Position
+						local now = tick()
+						local sent = 0
 						for _, v in items do
-							if tick() - (v:GetAttribute('ClientDropTime') or 0) < 2 then continue end
-							if isnetworkowner(v) and Network.Enabled and entitylib.character.Humanoid.Health > 0 then 
-								v.CFrame = CFrame.new(localPosition - Vector3.new(0, 3, 0)) 
+							if sent >= MAX_PER_TICK then
+								break
 							end
-							
-							if (localPosition - v.Position).Magnitude <= Range.Value then
-								if Lower.Enabled and (localPosition.Y - v.Position.Y) < (entitylib.character.HipHeight - 1) then continue end
+							if not v.Parent then
+								continue
+							end
+							if now - (v:GetAttribute('ClientDropTime') or 0) < 2 then
+								continue
+							end
+							if (nextTry[v] or 0) > now then
+								continue
+							end
+
+							-- Read the real distance before moving the drop.
+							local distance = (localPosition - v.Position).Magnitude
+							local teleported = false
+
+							if Network.Enabled and distance <= NETWORK_RANGE and isnetworkowner(v) then
+								v.CFrame = CFrame.new(localPosition - Vector3.new(0, 3, 0))
+								teleported = true
+							end
+
+							if teleported or distance <= Range.Value then
+								if not teleported and Lower.Enabled and (localPosition.Y - v.Position.Y) < (entitylib.character.HipHeight - 1) then
+									continue
+								end
+
+								nextTry[v] = now + RETRY_DELAY
+								sent += 1
+								local item = v
 								task.spawn(function()
 									bedwars.Client:Get(remotes.PickupItem):CallServerAsync({
-										itemDrop = v
+										itemDrop = item
 									}):andThen(function(suc)
 										if suc and bedwars.SoundList then
 											bedwars.SoundManager:playSound(bedwars.SoundList.PICKUP_ITEM_DROP)
-											local sound = bedwars.ItemMeta[v.Name].pickUpOverlaySound
+											local meta = bedwars.ItemMeta[item.Name]
+											local sound = meta and meta.pickUpOverlaySound
 											if sound then
 												bedwars.SoundManager:playSound(sound, {
-													position = v.Position,
+													position = item.Position,
 													volumeMultiplier = 0.9
 												})
 											end
