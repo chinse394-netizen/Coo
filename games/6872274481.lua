@@ -5331,6 +5331,10 @@ run(function()
 	local calibratedShots = 0
 	local pendingShot
 	local shotTracks = {}
+	local DebugLog
+	local recentParts = {}
+	local lastOwnLaunch = 0
+	local lastAimLog = 0
 	local JUMP_VELOCITY = 42.6
 	local SIM_STEP = 1 / 60
 	-- Long enough to cover far shots (2.5 seconds).
@@ -5982,6 +5986,12 @@ run(function()
 		return fallback and fallback.direction or nil
 	end
 
+	local function dlog(text)
+		if DebugLog and DebugLog.Enabled then
+			print('[ProjectileAimbot] ' .. text)
+		end
+	end
+
 	-- Gets how much each range counts for a flight time (blends between neighbours).
 	local function getRangeWeights(flight)
 		local weights = {0, 0, 0, 0}
@@ -6051,6 +6061,25 @@ run(function()
 
 	-- Uses where the arrow passed the target to fix the lead and height.
 	local function finishTrack(track)
+		if DebugLog.Enabled then
+			if not track.bestOffset then
+				dlog('Shot: arrow found but the target was gone, nothing to measure.')
+			else
+				local offset = track.bestOffset
+				local vel = track.bestVel
+				local ahead, side = 0, 0
+				if vel.Magnitude > 1 then
+					local dir = vel.Unit
+					ahead = offset:Dot(dir)
+					side = (Vector3.new(offset.X, 0, offset.Z) - dir * ahead).Magnitude
+				end
+				dlog(string.format(
+					'Shot: dist=%.0f flight=%.2fs targetSpeed=%.1f lead=%.3fs | miss=%.1f ahead=%+.1f up=%+.1f side=%.1f | onGround=%s',
+					track.dist or 0, track.flight, vel.Magnitude, track.lead or 0,
+					track.bestDist, ahead, offset.Y, side, tostring(track.bestGrounded)
+				))
+			end
+		end
 		if not AutoCalibrate.Enabled or not track.bestOffset then
 			return
 		end
@@ -6139,6 +6168,13 @@ run(function()
 		if character and object:IsDescendantOf(character) then
 			return
 		end
+		if DebugLog.Enabled then
+			local parentModel = object:FindFirstAncestorOfClass('Model')
+			table.insert(recentParts, object.Name .. (parentModel and (' in ' .. parentModel.Name) or ''))
+			if #recentParts > 12 then
+				table.remove(recentParts, 1)
+			end
+		end
 		local wanted = shot.projectile:lower()
 		local model = object:FindFirstAncestorOfClass('Model')
 		local nameMatch = object.Name:lower():find(wanted, 1, true) ~= nil
@@ -6155,6 +6191,7 @@ run(function()
 				return
 			end
 			shot.tracked = true
+			dlog('Arrow found: ' .. object:GetFullName())
 			if #shotTracks >= 8 then
 				table.remove(shotTracks, 1)
 			end
@@ -6165,6 +6202,8 @@ run(function()
 				start = os.clock(),
 				maxTime = math.clamp(shot.flight * 1.5 + 0.5, 0.6, 4),
 				flight = shot.flight,
+				lead = shot.lead,
+				dist = shot.dist,
 				startVel = shot.startVel,
 				bestDist = math.huge
 			})
@@ -6192,6 +6231,13 @@ run(function()
 					if #shotTracks > 0 then
 						pcall(updateTracks)
 					end
+					-- Report when you shot but the arrow could not be found.
+					local shot = pendingShot
+					if DebugLog.Enabled and shot and not shot.tracked and not shot.reported and lastOwnLaunch >= shot.time - 0.1 and now - lastOwnLaunch > 0.6 then
+						shot.reported = true
+						dlog('Arrow NOT found for "' .. shot.projectile .. '". New parts seen: ' .. (#recentParts > 0 and table.concat(recentParts, ', ') or 'none'))
+						table.clear(recentParts)
+					end
 				end))
 
 				ProjectileAimbot:Clean(workspace.DescendantAdded:Connect(onDescendantAdded))
@@ -6209,6 +6255,7 @@ run(function()
 						local character = lplr.Character
 						local own = character ~= nil and (shooter == character or shooter == lplr or (typeof(shooter) == 'Instance' and shooter:IsDescendantOf(character)))
 						if own then
+							lastOwnLaunch = now
 							if AccuracyLog.Enabled and lastAim and now - lastAim.time < 0.5 and lastAim.ent.Health then
 								local aim = lastAim
 								local healthBefore = aim.ent.Health
@@ -6456,8 +6503,15 @@ run(function()
 										flight = flight,
 										startVel = getFlatVelocity(plr),
 										time = os.clock(),
-										tracked = false
+										tracked = false,
+										lead = lead,
+										dist = (plr.RootPart.Position - offsetpos).Magnitude
 									}
+									if os.clock() - lastAimLog > 0.5 then
+										lastAimLog = os.clock()
+										dlog(string.format('Aim: %s dist=%.0f speed=%.0f gravity=%.0f lead=%.3fs targetSpeed=%.1f',
+											projmeta.projectile, pendingShot.dist, projSpeed, gravity, lead, flatten(velocity).Magnitude))
+									end
 								end
 							end
 							return {
@@ -6565,6 +6619,10 @@ run(function()
 		Name = 'Auto calibrate',
 		Default = true,
 		Tooltip = 'Watches where each arrow passes the target\nand fixes the lead and height after every shot.'
+	})
+	DebugLog = ProjectileAimbot:CreateToggle({
+		Name = 'Debug log',
+		Tooltip = 'Prints how every shot missed to the console (F9).\nSend the lines to get the aim fixed.'
 	})
 	ProjectileAimbot:CreateButton({
 		Name = 'Reset calibration',
