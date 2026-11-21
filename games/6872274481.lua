@@ -5306,6 +5306,21 @@ run(function()
 	local FLIP_TIME = 0.08
 	-- How long a target stays locked after you last aimed at it (seconds).
 	local STICKY_TIME = 0.35
+	-- How much each shot moves the learned fix (0 to 1).
+	local CAL_GAIN = 0.35
+	-- Only learn from shots that passed this close (studs).
+	local CAL_MAX_MISS = 9
+	-- Limits for the learned lead time (seconds).
+	local CAL_LEAD_MIN = -0.2
+	local CAL_LEAD_MAX = 0.3
+	-- Limit for the learned height fix (studs).
+	local CAL_HEIGHT_MAX = 1.5
+	local AutoCalibrate
+	local learnedLead = 0
+	local learnedHeight = 0
+	local calibratedShots = 0
+	local pendingShot
+	local shotTracks = {}
 	local JUMP_VELOCITY = 42.6
 	local SIM_STEP = 1 / 60
 	local SIM_STEPS = 132
@@ -5900,7 +5915,7 @@ run(function()
 		return arcs
 	end
 
-	local function chooseAim(origin, speed, gravity, maxTime, getPos, targetPart, rootPart, volatile)
+	local function chooseAim(origin, speed, gravity, maxTime, getPos, targetPart, rootPart, volatile, heightOffset)
 		local root = rootPart.Position
 		local flat = Vector3.new(root.X - origin.X, 0, root.Z - origin.Z)
 		if flat.Magnitude < 0.01 then
@@ -5912,6 +5927,8 @@ run(function()
 		if volatile and primary.Y > 0.5 then
 			primary = Vector3.new(0, 0.3, 0)
 		end
+		-- Learned height fix from past shots.
+		primary += Vector3.new(0, heightOffset or 0, 0)
 		local offsets = {
 			primary,
 			Vector3.new(0, 0.7, 0),
@@ -5945,6 +5962,146 @@ run(function()
 		return fallback and fallback.direction or nil
 	end
 
+	-- Where the game most likely judges the hit.
+	-- With Ping compensation on, that is a bit ahead of what you see.
+	local function getJudgePoint(part, flatVel)
+		local point = part.Position
+		if PingComp.Enabled then
+			local pingLead = math.clamp((getPingSeconds() / 2) + (InterpDelay.Value / 1000) - 0.045, 0, 0.4)
+			point += flatVel * pingLead
+		end
+		return point
+	end
+
+	local function getFlatVelocity(ent)
+		local profile = ent.Player and profiles[ent.Player]
+		if profile and profile.fvel and os.clock() - profile.filterTime < 0.15 then
+			return profile.fvel
+		end
+		local root = ent.RootPart
+		return root and flatten(root.AssemblyLinearVelocity) or Vector3.zero
+	end
+
+	-- Uses where the arrow passed the target to fix the lead and height.
+	local function finishTrack(track)
+		if not AutoCalibrate.Enabled or not track.bestOffset then
+			return
+		end
+		if track.bestDist > CAL_MAX_MISS then
+			return
+		end
+		local offset = track.bestOffset
+		local vel = track.bestVel
+		local speed = vel.Magnitude
+		local changed = false
+
+		-- Skip the lead fix if they turned around mid-flight. That was a juke, not bad timing.
+		local turned = track.startVel.Magnitude > 4 and speed > 4 and track.startVel.Unit:Dot(vel.Unit) < 0.5
+		if speed > 6 and not turned then
+			-- Positive means the arrow went in front of them (too much lead).
+			local timeError = offset:Dot(vel.Unit) / speed
+			timeError = math.clamp(timeError, -0.3, 0.3)
+			learnedLead = math.clamp(learnedLead - timeError * CAL_GAIN, CAL_LEAD_MIN, CAL_LEAD_MAX)
+			changed = true
+		end
+
+		-- Only learn height from shots on players standing on the ground.
+		if track.bestGrounded and math.abs(offset.Y) < 4 then
+			learnedHeight = math.clamp(learnedHeight - offset.Y * CAL_GAIN, -CAL_HEIGHT_MAX, CAL_HEIGHT_MAX)
+			changed = true
+		end
+
+		if changed then
+			calibratedShots += 1
+		end
+	end
+
+	local function updateTracks()
+		local now = os.clock()
+		for index = #shotTracks, 1, -1 do
+			local track = shotTracks[index]
+			local arrow = track.arrow
+			local target = track.ent
+			local targetPart = track.part
+			local arrowAlive = arrow.Parent ~= nil
+
+			if arrowAlive and targetPart and targetPart.Parent then
+				local arrowPos = arrow.Position
+				local flatVel = getFlatVelocity(target)
+				local judge = getJudgePoint(targetPart, flatVel)
+				local prev = track.prev or arrowPos
+
+				-- Closest point on the path the arrow moved this frame.
+				local segment = arrowPos - prev
+				local length2 = segment:Dot(segment)
+				local alpha = 1
+				if length2 > 1e-6 then
+					alpha = math.clamp((judge - prev):Dot(segment) / length2, 0, 1)
+				end
+				local closest = prev + segment * alpha
+				local offset = closest - judge
+				local dist = offset.Magnitude
+
+				if dist < track.bestDist then
+					track.bestDist = dist
+					track.bestOffset = offset
+					track.bestVel = flatVel
+					track.bestGrounded = target.Humanoid ~= nil and target.Humanoid.FloorMaterial ~= Enum.Material.Air
+				end
+				track.prev = arrowPos
+			end
+
+			if not arrowAlive or now - track.start > track.maxTime then
+				pcall(finishTrack, track)
+				table.remove(shotTracks, index)
+			end
+		end
+	end
+
+	-- Finds the arrow you just shot so it can be tracked.
+	local function onDescendantAdded(object)
+		local shot = pendingShot
+		if not shot or shot.tracked or os.clock() - shot.time > 0.4 then
+			return
+		end
+		if not object:IsA('BasePart') then
+			return
+		end
+		local character = lplr.Character
+		if character and object:IsDescendantOf(character) then
+			return
+		end
+		local wanted = shot.projectile:lower()
+		local model = object:FindFirstAncestorOfClass('Model')
+		local nameMatch = object.Name:lower():find(wanted, 1, true) ~= nil
+			or (model ~= nil and model.Name:lower():find(wanted, 1, true) ~= nil)
+		if not nameMatch then
+			return
+		end
+		-- Wait one frame so the arrow has its real starting position.
+		task.defer(function()
+			if shot.tracked or not object.Parent then
+				return
+			end
+			if (object.Position - shot.origin).Magnitude > 12 then
+				return
+			end
+			shot.tracked = true
+			if #shotTracks >= 8 then
+				table.remove(shotTracks, 1)
+			end
+			table.insert(shotTracks, {
+				arrow = object,
+				ent = shot.ent,
+				part = shot.part,
+				start = os.clock(),
+				maxTime = math.clamp(shot.flight * 1.5 + 0.5, 0.6, 4),
+				startVel = shot.startVel,
+				bestDist = math.huge
+			})
+		end)
+	end
+
 	ProjectileAimbot = vape.Categories.Blatant:CreateModule({
 		Name = 'ProjectileAimbot',
 		Function = function(callback)
@@ -5963,7 +6120,12 @@ run(function()
 							pcall(trackEntity, ent, now)
 						end
 					end
+					if #shotTracks > 0 then
+						pcall(updateTracks)
+					end
 				end))
+
+				ProjectileAimbot:Clean(workspace.DescendantAdded:Connect(onDescendantAdded))
 
 				local launchSuccess, launchEvent = pcall(function()
 					return bedwars.Client:Get('ProjectileLaunchClient').instance.OnClientEvent
@@ -5988,7 +6150,11 @@ run(function()
 										shotStats.hits += 1
 									end
 									if shotStats.total % 5 == 0 then
-										notif('ProjectileAimbot', string.format('Arrow hits: %d/%d (%d%%)', shotStats.hits, shotStats.total, math.floor(shotStats.hits / shotStats.total * 100)), 5)
+										local text = string.format('Arrow hits: %d/%d (%d%%)', shotStats.hits, shotStats.total, math.floor(shotStats.hits / shotStats.total * 100))
+										if AutoCalibrate.Enabled and calibratedShots > 0 then
+											text ..= string.format('\nLead fix: %+dms | Height fix: %+.1f', math.floor(learnedLead * 1000 + 0.5), learnedHeight)
+										end
+										notif('ProjectileAimbot', text, 5)
 									end
 								end)
 							end
@@ -6117,7 +6283,15 @@ run(function()
 
 						refreshRayFilter()
 						local now = os.clock()
-						local lead = isTelepearl and 0 or getLeadTime()
+						local lead = 0
+						local heightFix = 0
+						if not isTelepearl then
+							lead = getLeadTime()
+							if AutoCalibrate.Enabled then
+								lead = math.clamp(lead + learnedLead, 0, 0.6)
+								heightFix = learnedHeight
+							end
+						end
 						local direction
 
 						if plr.RootPart and plr.Player and not isTelepearl then
@@ -6147,7 +6321,7 @@ run(function()
 								local function getPos(t)
 									return getPathPosition(path, t + lead)
 								end
-								local success, result = pcall(chooseAim, offsetpos, projSpeed, gravity, maxTime, getPos, targetPart, plr.RootPart, volatile)
+								local success, result = pcall(chooseAim, offsetpos, projSpeed, gravity, maxTime, getPos, targetPart, plr.RootPart, volatile, heightFix)
 								if success then
 									direction = result
 								end
@@ -6159,6 +6333,7 @@ run(function()
 							if projmeta.projectile:find('arrow', 1, true) then
 								targetPosition += Vector3.new(0, math.clamp((plr.HipHeight or 2) * 0.3, 0.35, 0.9), 0)
 							end
+							targetPosition += Vector3.new(0, heightFix, 0)
 							local leadPosition = targetPosition + velocity * lead
 							local libraryAim = prediction.SolveTrajectory(offsetpos, projSpeed, gravity, leadPosition, velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
 							direction = libraryAim and (libraryAim - offsetpos).Unit
@@ -6186,7 +6361,21 @@ run(function()
 							stickyTime = os.clock()
 							targetinfo.Targets[plr] = tick() + 1
 							if plr.RootPart then
-								lastAim = {ent = plr, time = os.clock(), flight = (plr.RootPart.Position - offsetpos).Magnitude / projSpeed}
+								local flight = (plr.RootPart.Position - offsetpos).Magnitude / projSpeed
+								lastAim = {ent = plr, time = os.clock(), flight = flight}
+								-- Saved so the arrow can be found and checked after it is shot.
+								if not isTelepearl and plr.Player then
+									pendingShot = {
+										ent = plr,
+										part = targetPart,
+										origin = offsetpos,
+										projectile = projmeta.projectile,
+										flight = flight,
+										startVel = getFlatVelocity(plr),
+										time = os.clock(),
+										tracked = false
+									}
+								end
 							end
 							return {
 								initialVelocity = direction * projSpeed,
@@ -6205,6 +6394,8 @@ run(function()
 				stickyEnt = nil
 				stickyTime = 0
 				table.clear(aimMemory)
+				table.clear(shotTracks)
+				pendingShot = nil
 			end
 		end,
 		Tooltip = 'Silently adjusts your aim towards the enemy'
@@ -6286,6 +6477,20 @@ run(function()
 		Name = 'Sticky target',
 		Default = true,
 		Tooltip = 'Keeps aiming at the same player for a moment\ninstead of jumping to whoever is closest to your mouse.'
+	})
+	AutoCalibrate = ProjectileAimbot:CreateToggle({
+		Name = 'Auto calibrate',
+		Default = true,
+		Tooltip = 'Watches where each arrow passes the target\nand fixes the lead and height after every shot.'
+	})
+	ProjectileAimbot:CreateButton({
+		Name = 'Reset calibration',
+		Function = function()
+			learnedLead = 0
+			learnedHeight = 0
+			calibratedShots = 0
+			notif('ProjectileAimbot', 'Calibration reset.', 3)
+		end
 	})
 end)
 	
