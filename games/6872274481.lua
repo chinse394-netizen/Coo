@@ -6060,24 +6060,43 @@ run(function()
 	end
 
 	-- Uses where the arrow passed the target to fix the lead and height.
+	local function describeOffset(offset, vel)
+		local ahead, side = 0, 0
+		if vel.Magnitude > 1 then
+			local dir = vel.Unit
+			ahead = offset:Dot(dir)
+			side = (Vector3.new(offset.X, 0, offset.Z) - dir * ahead).Magnitude
+		end
+		return ahead, side
+	end
+
 	local function finishTrack(track)
 		if DebugLog.Enabled then
 			if not track.bestOffset then
 				dlog('Shot: arrow found but the target was gone, nothing to measure.')
 			else
-				local offset = track.bestOffset
-				local vel = track.bestVel
-				local ahead, side = 0, 0
-				if vel.Magnitude > 1 then
-					local dir = vel.Unit
-					ahead = offset:Dot(dir)
-					side = (Vector3.new(offset.X, 0, offset.Z) - dir * ahead).Magnitude
-				end
-				dlog(string.format(
-					'Shot: dist=%.0f flight=%.2fs targetSpeed=%.1f lead=%.3fs | miss=%.1f ahead=%+.1f up=%+.1f side=%.1f | onGround=%s',
-					track.dist or 0, track.flight, vel.Magnitude, track.lead or 0,
-					track.bestDist, ahead, offset.Y, side, tostring(track.bestGrounded)
-				))
+				-- Wait a moment so the hit has time to show up in their health.
+				task.delay(0.5, function()
+					local ent = track.ent
+					local before = track.healthBefore
+					local result = 'UNKNOWN'
+					if before and ent.Health then
+						result = ent.Health < before and 'HIT' or 'MISS'
+					end
+					local vel = track.bestVel
+					local ahead, side = describeOffset(track.bestOffset, vel)
+					local seenText = ''
+					if track.bestSeenOffset then
+						local seenAhead, seenSide = describeOffset(track.bestSeenOffset, vel)
+						seenText = string.format(' | screen: miss=%.1f ahead=%+.1f up=%+.1f side=%.1f',
+							track.bestSeenDist, seenAhead, track.bestSeenOffset.Y, seenSide)
+					end
+					dlog(string.format(
+						'%s dist=%.0f flight=%.2fs speed=%.1f vy=%+.0f ground=%s lead=%.3fs | lead point: miss=%.1f ahead=%+.1f up=%+.1f side=%.1f%s',
+						result, track.dist or 0, track.flight, vel.Magnitude, track.bestVy or 0, tostring(track.bestGrounded),
+						track.lead or 0, track.bestDist, ahead, track.bestOffset.Y, side, seenText
+					))
+				end)
 			end
 		end
 		if not AutoCalibrate.Enabled or not track.bestOffset then
@@ -6101,9 +6120,10 @@ run(function()
 			changed = true
 		end
 
-		-- Only learn height from shots on players standing on the ground.
-		if track.bestGrounded and math.abs(offset.Y) < 4 + track.flight * 3 then
-			heightError = offset.Y
+		-- Learn height from every shot. Shots on players in the air count less,
+		-- because part of that miss is from guessing their jump, not a fixed offset.
+		if math.abs(offset.Y) < 4 + track.flight * 3 then
+			heightError = track.bestGrounded and offset.Y or offset.Y * 0.6
 			changed = true
 		end
 
@@ -6111,6 +6131,26 @@ run(function()
 			applyCalibration(track.flight, leadError, heightError)
 			calibratedShots += 1
 		end
+	end
+
+	-- Checks the ground with a raycast. FloorMaterial does not update right
+	-- for other players, so it said almost everyone was in the air.
+	local groundParams = RaycastParams.new()
+	groundParams.FilterType = Enum.RaycastFilterType.Include
+	groundParams.RespectCanCollide = true
+	local function isGrounded(ent)
+		local root = ent.RootPart
+		if not root then
+			return false
+		end
+		local map = workspace:FindFirstChild('Map')
+		if not map then
+			return ent.Humanoid ~= nil and ent.Humanoid.FloorMaterial ~= Enum.Material.Air
+		end
+		groundParams.FilterDescendantsInstances = {map}
+		local hip = ent.HipHeight or 2
+		local result = workspace:Raycast(root.Position, Vector3.new(0, -(hip + 1.5), 0), groundParams)
+		return result ~= nil and math.abs(root.AssemblyLinearVelocity.Y) < 6
 	end
 
 	local function updateTracks()
@@ -6143,7 +6183,20 @@ run(function()
 					track.bestDist = dist
 					track.bestOffset = offset
 					track.bestVel = flatVel
-					track.bestGrounded = target.Humanoid ~= nil and target.Humanoid.FloorMaterial ~= Enum.Material.Air
+					track.bestGrounded = isGrounded(target)
+					track.bestVy = targetPart.AssemblyLinearVelocity.Y
+				end
+
+				-- Same check against where they look on your screen (no ping lead).
+				local seen = targetPart.Position
+				local seenAlpha = 1
+				if length2 > 1e-6 then
+					seenAlpha = math.clamp((seen - prev):Dot(segment) / length2, 0, 1)
+				end
+				local seenOffset = (prev + segment * seenAlpha) - seen
+				if seenOffset.Magnitude < (track.bestSeenDist or math.huge) then
+					track.bestSeenDist = seenOffset.Magnitude
+					track.bestSeenOffset = seenOffset
 				end
 				track.prev = arrowPos
 			end
@@ -6202,6 +6255,7 @@ run(function()
 				start = os.clock(),
 				maxTime = math.clamp(shot.flight * 1.5 + 0.5, 0.6, 4),
 				flight = shot.flight,
+				healthBefore = shot.ent.Health,
 				lead = shot.lead,
 				dist = shot.dist,
 				startVel = shot.startVel,
