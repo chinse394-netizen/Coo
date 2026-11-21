@@ -5335,6 +5335,11 @@ run(function()
 	local recentParts = {}
 	local lastOwnLaunch = 0
 	local lastAimLog = 0
+	-- True when hits are judged on your screen, so no ping lead is used.
+	local useScreenFrame = false
+	-- Hits needed before the ping mode can switch.
+	local FRAME_MIN_HITS = 5
+	local frameStats = {screenSum = 0, pingSum = 0, count = 0}
 	local JUMP_VELOCITY = 42.6
 	local SIM_STEP = 1 / 60
 	-- Long enough to cover far shots (2.5 seconds).
@@ -5421,7 +5426,7 @@ run(function()
 
 	local function getLeadTime()
 		local lead = 0
-		if PingComp.Enabled then
+		if PingComp.Enabled and not useScreenFrame then
 			lead += (getPingSeconds() / 2) + (InterpDelay.Value / 1000) - 0.045
 		end
 		if FPSComp.Enabled then
@@ -6039,15 +6044,9 @@ run(function()
 		end
 	end
 
-	-- Where the game most likely judges the hit.
-	-- With Ping compensation on, that is a bit ahead of what you see.
-	local function getJudgePoint(part, flatVel)
-		local point = part.Position
-		if PingComp.Enabled then
-			local pingLead = math.clamp((getPingSeconds() / 2) + (InterpDelay.Value / 1000) - 0.045, 0, 0.4)
-			point += flatVel * pingLead
-		end
-		return point
+	-- How far ahead of your screen the server likely has them (seconds).
+	local function getPingLead()
+		return math.clamp((getPingSeconds() / 2) + (InterpDelay.Value / 1000) - 0.045, 0, 0.4)
 	end
 
 	local function getFlatVelocity(ent)
@@ -6059,7 +6058,6 @@ run(function()
 		return root and flatten(root.AssemblyLinearVelocity) or Vector3.zero
 	end
 
-	-- Uses where the arrow passed the target to fix the lead and height.
 	local function describeOffset(offset, vel)
 		local ahead, side = 0, 0
 		if vel.Magnitude > 1 then
@@ -6070,67 +6068,119 @@ run(function()
 		return ahead, side
 	end
 
-	local function finishTrack(track)
-		if DebugLog.Enabled then
-			if not track.bestOffset then
-				dlog('Shot: arrow found but the target was gone, nothing to measure.')
-			else
-				-- Wait a moment so the hit has time to show up in their health.
-				task.delay(0.5, function()
-					local ent = track.ent
-					local before = track.healthBefore
-					local result = 'UNKNOWN'
-					if before and ent.Health then
-						result = ent.Health < before and 'HIT' or 'MISS'
-					end
-					local vel = track.bestVel
-					local ahead, side = describeOffset(track.bestOffset, vel)
-					local seenText = ''
-					if track.bestSeenOffset then
-						local seenAhead, seenSide = describeOffset(track.bestSeenOffset, vel)
-						seenText = string.format(' | screen: miss=%.1f ahead=%+.1f up=%+.1f side=%.1f',
-							track.bestSeenDist, seenAhead, track.bestSeenOffset.Y, seenSide)
-					end
-					dlog(string.format(
-						'%s dist=%.0f flight=%.2fs speed=%.1f vy=%+.0f ground=%s lead=%.3fs | lead point: miss=%.1f ahead=%+.1f up=%+.1f side=%.1f%s',
-						result, track.dist or 0, track.flight, vel.Magnitude, track.bestVy or 0, tostring(track.bestGrounded),
-						track.lead or 0, track.bestDist, ahead, track.bestOffset.Y, side, seenText
-					))
-				end)
-			end
-		end
-		if not AutoCalibrate.Enabled or not track.bestOffset then
+	-- Adds a hit to the stats used to pick the ping mode.
+	-- Hits are judged by one of the two points. The one that hits land closer to is the real one.
+	local function recordHitFrame(track)
+		if not (track.bestSeenDist and track.bestPingDist) then
 			return
 		end
-		if track.bestDist > CAL_MAX_MISS + track.flight * CAL_MAX_MISS_PER_SEC then
+		-- Only useful when the two points are far enough apart to tell them apart.
+		if (track.bestVel and track.bestVel.Magnitude or 0) < 8 then
 			return
 		end
-		local offset = track.bestOffset
+		frameStats.screenSum += track.bestSeenDist
+		frameStats.pingSum += track.bestPingDist
+		frameStats.count += 1
+		if frameStats.count < FRAME_MIN_HITS then
+			return
+		end
+		local screenAvg = frameStats.screenSum / frameStats.count
+		local pingAvg = frameStats.pingSum / frameStats.count
+		local newMode = useScreenFrame
+		if screenAvg < pingAvg * 0.8 then
+			newMode = true
+		elseif pingAvg < screenAvg * 0.8 then
+			newMode = false
+		end
+		if newMode ~= useScreenFrame then
+			useScreenFrame = newMode
+			-- The old fix was learned for the other mode, so start fresh.
+			learnedLeads = {0, 0, 0, 0}
+			learnedHeights = {0, 0, 0, 0}
+			calibratedShots = 0
+			notif('ProjectileAimbot', useScreenFrame and 'Hits are judged on your screen. Ping lead turned off.' or 'Hits are judged on the server. Ping lead turned on.', 5)
+			dlog(string.format('Ping mode switched to %s (screen avg %.1f, server avg %.1f)', useScreenFrame and 'SCREEN' or 'SERVER', screenAvg, pingAvg))
+		end
+		-- Keep the stats recent so it can switch back if things change.
+		if frameStats.count > 20 then
+			frameStats.screenSum *= 0.5
+			frameStats.pingSum *= 0.5
+			frameStats.count *= 0.5
+		end
+	end
+
+	-- Uses where a missed arrow passed the target to fix the lead and height.
+	local function calibrateFromMiss(track, offset, dist)
+		if not AutoCalibrate.Enabled or not offset then
+			return
+		end
+		if dist > CAL_MAX_MISS + track.flight * CAL_MAX_MISS_PER_SEC then
+			return
+		end
 		local vel = track.bestVel
 		local speed = vel.Magnitude
-		local changed = false
 		local leadError, heightError
 
 		-- Skip the lead fix if they turned around mid-flight. That was a juke, not bad timing.
 		local turned = track.startVel.Magnitude > 4 and speed > 4 and track.startVel.Unit:Dot(vel.Unit) < 0.5
 		if speed > 6 and not turned then
 			-- Positive means the arrow went in front of them (too much lead).
-			local timeError = offset:Dot(vel.Unit) / speed
-			leadError = math.clamp(timeError, -0.5, 0.5)
-			changed = true
+			leadError = math.clamp(offset:Dot(vel.Unit) / speed, -0.5, 0.5)
 		end
 
-		-- Learn height from every shot. Shots on players in the air count less,
-		-- because part of that miss is from guessing their jump, not a fixed offset.
+		-- Shots on players in the air count less, part of that miss is the jump guess.
 		if math.abs(offset.Y) < 4 + track.flight * 3 then
 			heightError = track.bestGrounded and offset.Y or offset.Y * 0.6
-			changed = true
 		end
 
-		if changed then
+		if leadError or heightError then
 			applyCalibration(track.flight, leadError, heightError)
 			calibratedShots += 1
 		end
+	end
+
+	local function finishTrack(track)
+		if not track.bestSeenOffset then
+			dlog('Shot: arrow found but the target was gone, nothing to measure.')
+			return
+		end
+		-- Wait a moment so a hit has time to show up in their health.
+		task.delay(0.5, function()
+			local ent = track.ent
+			local before = track.healthBefore
+			local result = 'UNKNOWN'
+			if before and ent.Health then
+				result = ent.Health < before and 'HIT' or 'MISS'
+			end
+
+			-- The point this shot was aimed for, based on the ping mode at the time.
+			local offset = track.usedScreen and track.bestSeenOffset or track.bestPingOffset
+			local dist = track.usedScreen and track.bestSeenDist or track.bestPingDist
+
+			if result == 'HIT' then
+				-- A hit means the aim was good. Do not move the fix, only learn the ping mode.
+				recordHitFrame(track)
+			else
+				calibrateFromMiss(track, offset, dist)
+			end
+
+			if DebugLog.Enabled then
+				local vel = track.bestVel or Vector3.zero
+				local seenAhead, seenSide = describeOffset(track.bestSeenOffset, vel)
+				local pingText = ''
+				if track.bestPingOffset then
+					local pingAhead, pingSide = describeOffset(track.bestPingOffset, vel)
+					pingText = string.format(' | server: miss=%.1f ahead=%+.1f up=%+.1f side=%.1f',
+						track.bestPingDist, pingAhead, track.bestPingOffset.Y, pingSide)
+				end
+				dlog(string.format(
+					'%s dist=%.0f flight=%.2fs speed=%.1f vy=%+.0f ground=%s lead=%.3fs mode=%s | screen: miss=%.1f ahead=%+.1f up=%+.1f side=%.1f%s',
+					result, track.dist or 0, track.flight, vel.Magnitude, track.bestVy or 0, tostring(track.bestGrounded),
+					track.lead or 0, track.usedScreen and 'SCREEN' or 'SERVER',
+					track.bestSeenDist, seenAhead, track.bestSeenOffset.Y, seenSide, pingText
+				))
+			end
+		end)
 	end
 
 	-- Checks the ground with a raycast. FloorMaterial does not update right
@@ -6153,6 +6203,17 @@ run(function()
 		return result ~= nil and math.abs(root.AssemblyLinearVelocity.Y) < 6
 	end
 
+	-- Closest the arrow got to a point while moving from prev to now.
+	local function closestOffset(prev, now, point)
+		local segment = now - prev
+		local length2 = segment:Dot(segment)
+		local alpha = 1
+		if length2 > 1e-6 then
+			alpha = math.clamp((point - prev):Dot(segment) / length2, 0, 1)
+		end
+		return (prev + segment * alpha) - point
+	end
+
 	local function updateTracks()
 		local now = os.clock()
 		for index = #shotTracks, 1, -1 do
@@ -6164,40 +6225,26 @@ run(function()
 
 			if arrowAlive and targetPart and targetPart.Parent then
 				local arrowPos = arrow.Position
-				local flatVel = getFlatVelocity(target)
-				local judge = getJudgePoint(targetPart, flatVel)
 				local prev = track.prev or arrowPos
+				local flatVel = getFlatVelocity(target)
 
-				-- Closest point on the path the arrow moved this frame.
-				local segment = arrowPos - prev
-				local length2 = segment:Dot(segment)
-				local alpha = 1
-				if length2 > 1e-6 then
-					alpha = math.clamp((judge - prev):Dot(segment) / length2, 0, 1)
-				end
-				local closest = prev + segment * alpha
-				local offset = closest - judge
-				local dist = offset.Magnitude
-
-				if dist < track.bestDist then
-					track.bestDist = dist
-					track.bestOffset = offset
+				-- Miss measured against where they look on your screen.
+				local seenOffset = closestOffset(prev, arrowPos, targetPart.Position)
+				if seenOffset.Magnitude < track.bestSeenDist then
+					track.bestSeenDist = seenOffset.Magnitude
+					track.bestSeenOffset = seenOffset
 					track.bestVel = flatVel
 					track.bestGrounded = isGrounded(target)
 					track.bestVy = targetPart.AssemblyLinearVelocity.Y
 				end
 
-				-- Same check against where they look on your screen (no ping lead).
-				local seen = targetPart.Position
-				local seenAlpha = 1
-				if length2 > 1e-6 then
-					seenAlpha = math.clamp((seen - prev):Dot(segment) / length2, 0, 1)
+				-- Miss measured against where the server likely has them.
+				local pingOffset = closestOffset(prev, arrowPos, targetPart.Position + flatVel * getPingLead())
+				if pingOffset.Magnitude < track.bestPingDist then
+					track.bestPingDist = pingOffset.Magnitude
+					track.bestPingOffset = pingOffset
 				end
-				local seenOffset = (prev + segment * seenAlpha) - seen
-				if seenOffset.Magnitude < (track.bestSeenDist or math.huge) then
-					track.bestSeenDist = seenOffset.Magnitude
-					track.bestSeenOffset = seenOffset
-				end
+
 				track.prev = arrowPos
 			end
 
@@ -6259,7 +6306,9 @@ run(function()
 				lead = shot.lead,
 				dist = shot.dist,
 				startVel = shot.startVel,
-				bestDist = math.huge
+				bestSeenDist = math.huge,
+				bestPingDist = math.huge,
+				usedScreen = shot.usedScreen
 			})
 		end)
 	end
@@ -6558,6 +6607,7 @@ run(function()
 										startVel = getFlatVelocity(plr),
 										time = os.clock(),
 										tracked = false,
+										usedScreen = useScreenFrame or not PingComp.Enabled,
 										lead = lead,
 										dist = (plr.RootPart.Position - offsetpos).Magnitude
 									}
@@ -6684,6 +6734,8 @@ run(function()
 			learnedLeads = {0, 0, 0, 0}
 			learnedHeights = {0, 0, 0, 0}
 			calibratedShots = 0
+			useScreenFrame = false
+			frameStats = {screenSum = 0, pingSum = 0, count = 0}
 			notif('ProjectileAimbot', 'Calibration reset.', 3)
 		end
 	})
