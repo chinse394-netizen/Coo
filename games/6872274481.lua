@@ -5302,6 +5302,9 @@ run(function()
 	local AIM_TAU = 0.04
 	-- Aim changes bigger than this snap right away (degrees).
 	local AIM_SNAP_DEG = 1.5
+	-- Smoothing never moves the aim more than this at the target (studs).
+	-- Keeps long shots exact, where a small angle is a big miss.
+	local AIM_SNAP_STUDS = 0.6
 	-- Time to swap from one strafe side to the other (seconds).
 	local FLIP_TIME = 0.08
 	-- How long a target stays locked after you last aimed at it (seconds).
@@ -5309,22 +5312,31 @@ run(function()
 	-- How much each shot moves the learned fix (0 to 1).
 	local CAL_GAIN = 0.35
 	-- Only learn from shots that passed this close (studs).
+	-- Far shots are allowed to miss by more before they are ignored.
 	local CAL_MAX_MISS = 9
+	local CAL_MAX_MISS_PER_SEC = 12
+	-- Flight times (seconds) for close, medium, far and very far shots.
+	-- Each range learns its own fix, because far shots miss for different reasons.
+	local CAL_RANGES = {0.25, 0.5, 0.8, 1.2}
+	-- How much a fix at one range also moves the others (shared ping part).
+	local CAL_SHARE = 0.2
 	-- Limits for the learned lead time (seconds).
 	local CAL_LEAD_MIN = -0.2
 	local CAL_LEAD_MAX = 0.3
 	-- Limit for the learned height fix (studs).
-	local CAL_HEIGHT_MAX = 1.5
+	local CAL_HEIGHT_MAX = 2.5
 	local AutoCalibrate
-	local learnedLead = 0
-	local learnedHeight = 0
+	local learnedLeads = {0, 0, 0, 0}
+	local learnedHeights = {0, 0, 0, 0}
 	local calibratedShots = 0
 	local pendingShot
 	local shotTracks = {}
 	local JUMP_VELOCITY = 42.6
 	local SIM_STEP = 1 / 60
-	local SIM_STEPS = 132
-	local RATIO_HORIZONS = {0.3, 0.6, 0.9}
+	-- Long enough to cover far shots (2.5 seconds).
+	local SIM_STEPS = 150
+	-- Flight times we learn movement for. 1.3s covers long range shots.
+	local RATIO_HORIZONS = {0.3, 0.6, 0.9, 1.3}
 	local rayCheck = RaycastParams.new()
 	rayCheck.FilterType = Enum.RaycastFilterType.Include
 	rayCheck.RespectCanCollide = true
@@ -5439,7 +5451,7 @@ run(function()
 				lastShot = 0,
 				pending = nil,
 				reactions = {},
-				ratios = {{}, {}, {}},
+				ratios = {{}, {}, {}, {}},
 				lastRatioTime = 0,
 				fvel = nil,
 				facc = Vector3.zero,
@@ -5616,7 +5628,9 @@ run(function()
 
 	local function getLearnedRatio(profile, flightTime, speed)
 		local bucket = 1
-		if flightTime > 0.75 then
+		if flightTime > 1.1 then
+			bucket = 4
+		elseif flightTime > 0.75 then
 			bucket = 3
 		elseif flightTime > 0.45 then
 			bucket = 2
@@ -5864,12 +5878,18 @@ run(function()
 		local endTime = flightTime * 0.985
 		local steps = math.clamp(math.ceil(endTime / 0.035), 8, 48)
 		local previous = origin
+		-- Where the arrow meets the target.
+		local finalPos = origin + startVelocity * flightTime - Vector3.new(0, 0.5 * gravity * flightTime * flightTime, 0)
 		for step = 1, steps do
 			local t = endTime * step / steps
 			local position = origin + startVelocity * t - Vector3.new(0, 0.5 * gravity * t * t, 0)
 			local result = workspace:Raycast(previous, position - previous, rayCheck)
 			if result and not collectionService:HasTag(result.Instance, 'DontBlockProjectileRaycast') then
-				return t
+				-- A block touching the target (like the one they stand on) does not count.
+				-- The arrow reaches them first. This was making far shots aim off their body.
+				if (result.Position - finalPos).Magnitude > 3 then
+					return t
+				end
 			end
 			previous = position
 		end
@@ -5962,6 +5982,53 @@ run(function()
 		return fallback and fallback.direction or nil
 	end
 
+	-- Gets how much each range counts for a flight time (blends between neighbours).
+	local function getRangeWeights(flight)
+		local weights = {0, 0, 0, 0}
+		local count = #CAL_RANGES
+		if flight <= CAL_RANGES[1] then
+			weights[1] = 1
+		elseif flight >= CAL_RANGES[count] then
+			weights[count] = 1
+		else
+			for index = 1, count - 1 do
+				local low, high = CAL_RANGES[index], CAL_RANGES[index + 1]
+				if flight >= low and flight <= high then
+					local alpha = (flight - low) / (high - low)
+					weights[index] = 1 - alpha
+					weights[index + 1] = alpha
+					break
+				end
+			end
+		end
+		return weights
+	end
+
+	-- Learned lead and height fix for a flight time.
+	local function getCalibration(flight)
+		local weights = getRangeWeights(flight)
+		local leadFix, heightFix = 0, 0
+		for index, weight in weights do
+			leadFix += learnedLeads[index] * weight
+			heightFix += learnedHeights[index] * weight
+		end
+		return leadFix, heightFix
+	end
+
+	-- Moves the learned fix for this range, and a little for the other ranges.
+	local function applyCalibration(flight, leadError, heightError)
+		local weights = getRangeWeights(flight)
+		for index, weight in weights do
+			local amount = CAL_GAIN * math.min(weight + CAL_SHARE, 1)
+			if leadError then
+				learnedLeads[index] = math.clamp(learnedLeads[index] - leadError * amount, CAL_LEAD_MIN, CAL_LEAD_MAX)
+			end
+			if heightError then
+				learnedHeights[index] = math.clamp(learnedHeights[index] - heightError * amount, -CAL_HEIGHT_MAX, CAL_HEIGHT_MAX)
+			end
+		end
+	end
+
 	-- Where the game most likely judges the hit.
 	-- With Ping compensation on, that is a bit ahead of what you see.
 	local function getJudgePoint(part, flatVel)
@@ -5987,31 +6054,32 @@ run(function()
 		if not AutoCalibrate.Enabled or not track.bestOffset then
 			return
 		end
-		if track.bestDist > CAL_MAX_MISS then
+		if track.bestDist > CAL_MAX_MISS + track.flight * CAL_MAX_MISS_PER_SEC then
 			return
 		end
 		local offset = track.bestOffset
 		local vel = track.bestVel
 		local speed = vel.Magnitude
 		local changed = false
+		local leadError, heightError
 
 		-- Skip the lead fix if they turned around mid-flight. That was a juke, not bad timing.
 		local turned = track.startVel.Magnitude > 4 and speed > 4 and track.startVel.Unit:Dot(vel.Unit) < 0.5
 		if speed > 6 and not turned then
 			-- Positive means the arrow went in front of them (too much lead).
 			local timeError = offset:Dot(vel.Unit) / speed
-			timeError = math.clamp(timeError, -0.3, 0.3)
-			learnedLead = math.clamp(learnedLead - timeError * CAL_GAIN, CAL_LEAD_MIN, CAL_LEAD_MAX)
+			leadError = math.clamp(timeError, -0.5, 0.5)
 			changed = true
 		end
 
 		-- Only learn height from shots on players standing on the ground.
-		if track.bestGrounded and math.abs(offset.Y) < 4 then
-			learnedHeight = math.clamp(learnedHeight - offset.Y * CAL_GAIN, -CAL_HEIGHT_MAX, CAL_HEIGHT_MAX)
+		if track.bestGrounded and math.abs(offset.Y) < 4 + track.flight * 3 then
+			heightError = offset.Y
 			changed = true
 		end
 
 		if changed then
+			applyCalibration(track.flight, leadError, heightError)
 			calibratedShots += 1
 		end
 	end
@@ -6096,6 +6164,7 @@ run(function()
 				part = shot.part,
 				start = os.clock(),
 				maxTime = math.clamp(shot.flight * 1.5 + 0.5, 0.6, 4),
+				flight = shot.flight,
 				startVel = shot.startVel,
 				bestDist = math.huge
 			})
@@ -6152,7 +6221,12 @@ run(function()
 									if shotStats.total % 5 == 0 then
 										local text = string.format('Arrow hits: %d/%d (%d%%)', shotStats.hits, shotStats.total, math.floor(shotStats.hits / shotStats.total * 100))
 										if AutoCalibrate.Enabled and calibratedShots > 0 then
-											text ..= string.format('\nLead fix: %+dms | Height fix: %+.1f', math.floor(learnedLead * 1000 + 0.5), learnedHeight)
+											text ..= string.format(
+												'\nLead fix close/mid/far: %+d/%+d/%+dms',
+												math.floor(learnedLeads[1] * 1000 + 0.5),
+												math.floor(learnedLeads[2] * 1000 + 0.5),
+												math.floor(learnedLeads[4] * 1000 + 0.5)
+											)
 										end
 										notif('ProjectileAimbot', text, 5)
 									end
@@ -6285,11 +6359,14 @@ run(function()
 						local now = os.clock()
 						local lead = 0
 						local heightFix = 0
+						-- Rough flight time, used to pick the right fix for this range.
+						local flightEstimate = (targetPart.Position - offsetpos).Magnitude / projSpeed
 						if not isTelepearl then
 							lead = getLeadTime()
 							if AutoCalibrate.Enabled then
-								lead = math.clamp(lead + learnedLead, 0, 0.6)
-								heightFix = learnedHeight
+								local leadFix, heightOffset = getCalibration(flightEstimate)
+								lead = math.clamp(lead + leadFix, 0, 0.6)
+								heightFix = heightOffset
 							end
 						end
 						local direction
@@ -6298,8 +6375,12 @@ run(function()
 							local profile = profiles[plr.Player]
 							local reaction = (profile and LearnMoves.Enabled) and getReactionFactor(profile, now) or 1
 							local ratio = 1
-							if profile and LearnMoves.Enabled and JukeGuard.Enabled and not isArrow and reaction == 1 and not getStrafePattern(profile, now) then
-								local flightGuess = ((plr.RootPart.Position - offsetpos).Magnitude / projSpeed) + lead
+							local flightGuess = ((plr.RootPart.Position - offsetpos).Magnitude / projSpeed) + lead
+							-- Arrows only use this at medium and long range.
+							-- Up close, straight-line aim is already right. Far away, players rarely
+							-- keep going straight, so aim where they usually end up.
+							local useRatio = not isArrow or flightGuess > 0.4
+							if profile and LearnMoves.Enabled and JukeGuard.Enabled and useRatio and reaction == 1 and not getStrafePattern(profile, now) then
 								ratio = getLearnedRatio(profile, flightGuess, flatten(velocity).Magnitude)
 							end
 							local simVelocity = Vector3.new(velocity.X * ratio, velocity.Y, velocity.Z * ratio)
@@ -6346,7 +6427,9 @@ run(function()
 							local clockNow = os.clock()
 							if memory and memory.projectile == projmeta.projectile and clockNow - memory.t < 0.15 then
 								local angle = math.deg(math.acos(math.clamp(memory.dir:Dot(direction), -1, 1)))
-								if angle <= AIM_SNAP_DEG then
+								local targetDistance = plr.RootPart and (plr.RootPart.Position - offsetpos).Magnitude or 30
+								local snapLimit = math.min(AIM_SNAP_DEG, math.deg(math.atan(AIM_SNAP_STUDS / math.max(targetDistance, 1))))
+								if angle <= snapLimit then
 									local mixed = memory.dir:Lerp(direction, blend(clockNow - memory.t, AIM_TAU))
 									if mixed.Magnitude > 0.01 then
 										direction = mixed.Unit
@@ -6486,8 +6569,8 @@ run(function()
 	ProjectileAimbot:CreateButton({
 		Name = 'Reset calibration',
 		Function = function()
-			learnedLead = 0
-			learnedHeight = 0
+			learnedLeads = {0, 0, 0, 0}
+			learnedHeights = {0, 0, 0, 0}
 			calibratedShots = 0
 			notif('ProjectileAimbot', 'Calibration reset.', 3)
 		end
