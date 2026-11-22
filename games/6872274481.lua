@@ -1902,6 +1902,7 @@ run(function()
     
     local holding = false
     local clickThread
+	local purchaseInFlight = false
     
     local function getShopId()
         if not entitylib.isAlive then return nil end
@@ -1942,17 +1943,32 @@ run(function()
     end
     
     local function purchase(itemType, shopId)
+		if purchaseInFlight then return end
         if bedwars.BedwarsShopController.alreadyPurchasedMap[itemType] ~= nil then return end
     
         local item = bedwars.Shop.getShopItem(itemType, lplr, {shopId = shopId})
         if not item or not canBuy(item) then return end
     
-        bedwars.Client:Get('BedwarsPurchaseItem'):CallServerAsync({
-            shopItem = item,
-            shopId = shopId
-        }):andThen(function(suc)
+		purchaseInFlight = true
+		local callSucceeded, purchasePromise = pcall(function()
+			return bedwars.Client:Get('BedwarsPurchaseItem'):CallServerAsync({
+				shopItem = item,
+				shopId = shopId
+			})
+		end)
+		if not callSucceeded or not purchasePromise then
+			purchaseInFlight = false
+			return
+		end
+
+		purchasePromise:andThen(function(suc)
+			purchaseInFlight = false
             if not suc then return end
-            bedwars.SoundManager:playSound(bedwars.SoundList.BEDWARS_PURCHASE_ITEM)
+			local soundManager = bedwars.SoundManager
+			local soundList = bedwars.SoundList
+			if soundManager and soundManager.playSound and soundList and soundList.BEDWARS_PURCHASE_ITEM then
+				soundManager:playSound(soundList.BEDWARS_PURCHASE_ITEM)
+			end
             bedwars.Store:dispatch({
                 type = 'BedwarsAddItemPurchased',
                 itemType = itemType
@@ -1960,6 +1976,8 @@ run(function()
             if item.tiered then
                 bedwars.BedwarsShopController.alreadyPurchasedMap[itemType] = true
             end
+		end):catch(function()
+			purchaseInFlight = false
         end)
     end
     
