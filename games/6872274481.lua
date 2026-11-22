@@ -2899,9 +2899,10 @@ run(function()
 					return
 				end
 				projectileRemote = remote
+				local projectileRemoteName = remote.Name
 
 				oldNamecall = hookmetamethod(game, '__namecall', newcclosure(function(self, ...)
-					if SilentAim.Enabled and getnamecallmethod() == 'InvokeServer' and self == projectileRemote then
+					if SilentAim.Enabled and getnamecallmethod() == 'InvokeServer' and (self == projectileRemote or self.Name == projectileRemoteName) then
 						local arguments = table.pack(...)
 						local ok, redirectedVelocity = pcall(solveSilent, arguments)
 						if ok and typeof(redirectedVelocity) == 'Vector3' then
@@ -5744,7 +5745,7 @@ run(function()
     					-- Pass the target's RootPart so the prediction library can learn its per-target
     					-- motion (strafe/turn/jump/knockback) and apply latency compensation internally.
     					-- targetpos stays the aim part; the library derives the aim/root offset itself.
-    					local targetVelocity = projmeta.projectile == 'telepearl' and Vector3.zero or plr.RootPart.Velocity
+	    					local targetVelocity = projmeta.projectile == 'telepearl' and Vector3.zero or (plr.RootPart.AssemblyLinearVelocity or plr.RootPart.Velocity)
     					local calc, predImpact, predTime = prediction.SolveTrajectory(newlook.p, projSpeed * Prediction.Value, gravity, targetpos, targetVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, nil, plr.RootPart)
     					-- Directional prediction: independently scale how far we lead the target
     					-- sideways (Horizontal, the X/Z plane) vs while it rises or falls (Vertical, Y).
