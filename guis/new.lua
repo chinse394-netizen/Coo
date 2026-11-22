@@ -196,20 +196,30 @@ end
 local function addMaid(object)
 	object.Connections = {}
 	function object:Clean(callback)
-		if typeof(callback) == 'Instance' then
-			table.insert(self.Connections, {
-				Disconnect = function()
-					callback:ClearAllChildren()
-					callback:Destroy()
-				end
-			})
-		elseif type(callback) == 'function' then
-			table.insert(self.Connections, {
-				Disconnect = callback
-			})
-		else
-			table.insert(self.Connections, callback)
+		if callback == nil then
+			return
 		end
+
+		table.insert(self.Connections, {
+			Disconnect = function()
+				pcall(function()
+					if typeof(callback) == 'Instance' then
+						callback:ClearAllChildren()
+						callback:Destroy()
+					elseif typeof(callback) == 'RBXScriptConnection' then
+						if callback.Connected then
+							callback:Disconnect()
+						end
+					elseif type(callback) == 'thread' then
+						task.cancel(callback)
+					elseif type(callback) == 'function' then
+						callback()
+					elseif type(callback) == 'table' and type(callback.Disconnect) == 'function' then
+						callback:Disconnect()
+					end
+				end)
+			end
+		})
 	end
 end
 
