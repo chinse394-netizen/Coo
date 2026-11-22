@@ -1361,13 +1361,19 @@ run(function()
 	local storeChanged = bedwars.Store.changed:connect(updateStore)
 	updateStore(bedwars.Store:getState(), {})
 
-	for _, event in {'MatchEndEvent', 'EntityDeathEvent', 'BedwarsBedBreak', 'BalloonPopped', 'AngelProgress', 'GrapplingHookFunctions'} do
+	for _, event in {'MatchEndEvent', 'BedwarsBedBreak', 'BalloonPopped', 'AngelProgress', 'GrapplingHookFunctions'} do
 		if not vape.Connections then return end
 		bedwars.Client:WaitFor(event):andThen(function(connection)
 			vape:Clean(connection:Connect(function(...)
 				vapeEvents[event]:Fire(...)
 			end))
 		end)
+	end
+
+	if bedwars.ZapNetworking.EntityDeathEventZap then
+		vape:Clean(bedwars.ZapNetworking.EntityDeathEventZap.On(function(deathTable)
+			vapeEvents.EntityDeathEvent:Fire(deathTable)
+		end))
 	end
 
 	vape:Clean(bedwars.ZapNetworking.EntityDamageEventZap.On(function(...)
@@ -2072,20 +2078,9 @@ end)
 					local function fireSilentAttack(attackData)
 						if not silentAttackRemote then return end
 						local _atkPlr = playersService:GetPlayerFromCharacter(attackData.entityInstance)
-						if _atkPlr then
-							local targetTier = getAccountTier(_atkPlr)
-							if targetTier >= 99 then return end
-							if targetTier >= 4 and getAccountTier(lplr) == 0 then
-								local uid = _atkPlr.UserId
-								local now = tick()
-								if not _saT4HitTick[uid] or now - _saT4HitTick[uid] >= 10 then
-									_saT4HitTick[uid] = now
-									_saT4HitCount[uid] = 0
-								end
-								_saT4HitCount[uid] = (_saT4HitCount[uid] or 0) + 1
-								if _saT4HitCount[uid] > 32 then return end
-							end
-							if not select(2, whitelist:get(_atkPlr)) then return end
+						if _atkPlr and whitelist and whitelist.get then
+							local success, _, protected = pcall(whitelist.get, whitelist, _atkPlr)
+							if success and protected then return end
 						end
 						local selfpos = attackData.validate.selfPosition.value
 						local targetpos = attackData.validate.targetPosition.value
