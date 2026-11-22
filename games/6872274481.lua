@@ -6225,6 +6225,16 @@ run(function()
 	local Folder = Instance.new('Folder')
 	Folder.Parent = vape.gui
 	local methodused
+
+	local function getCachedAsyncValue(cache, player)
+		local entry = cache and cache[player]
+		if not entry or type(entry.async) ~= 'function' then
+			return nil
+		end
+
+		local success, value = pcall(entry.async, entry)
+		return success and value or nil
+	end
 	
 	local Added = {
 		Normal = function(ent)
@@ -6243,6 +6253,10 @@ run(function()
 			if Distance.Enabled then
 				Strings[ent] = '<font color="rgb(85, 255, 85)">[</font><font color="rgb(255, 255, 255)">%s</font><font color="rgb(85, 255, 85)">]</font> '..Strings[ent]
 			end
+
+		nametag.TextSize = 14 * Scale.Value
+		nametag.FontFace = FontOption.Value
+		local textSize = getfontsize(removeTags(Strings[ent]), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
 	
 			if Equipment.Enabled then
 				for i, v in {'Hand', 'Helmet', 'Chestplate', 'Boots', 'Kit'} do
@@ -6258,33 +6272,35 @@ run(function()
 	
 			task.spawn(function()
 				if Rank.Enabled and ent.Player then
+				local rank = getCachedAsyncValue(store.rank, ent.Player)
+				local rankMeta = rank and bedwars.RankMeta and bedwars.RankMeta[rank]
+				if not rankMeta or not rankMeta.image then return end
 					local Icon = Instance.new('ImageLabel')
 					Icon.Name = 'RankIcon'
 					Icon.Size = UDim2.fromOffset(30, 30)
-					Icon.Position = UDim2.fromOffset(size.X + 10, -4)
+				Icon.Position = UDim2.fromOffset(textSize.X + 10, -4)
 					Icon.BackgroundTransparency = 1
-					Icon.Image = store.rank[ent.Player]:async() and bedwars.RankMeta[store.rank[ent.Player]:async()].image or ''
+				Icon.Image = rankMeta.image
 					Icon.Parent = nametag
 				end
 			end)
 	
 			task.spawn(function()
 				if Enchant.Enabled and ent.Player then
+				local enchant = getCachedAsyncValue(store.enchants, ent.Player)
+				if not enchant then return end
 					local Icon = Instance.new('ImageLabel')
 					Icon.Name = 'EnchantIcon'
 					Icon.Size = UDim2.fromOffset(30, 30)
 					Icon.Position = UDim2.fromOffset(-30, -4)
 					Icon.BackgroundTransparency = 1
-					Icon.Image = store.enchants[ent.Player]:async() or ''
+				Icon.Image = enchant
 					Icon.Parent = nametag
 				end
 			end)
 	
-			nametag.TextSize = 14 * Scale.Value
-			nametag.FontFace = FontOption.Value
-			local size = getfontsize(removeTags(Strings[ent]), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
 			nametag.Name = ent.Player and ent.Player.Name or ent.Character.Name
-			nametag.Size = UDim2.fromOffset(size.X + 8, size.Y + 7)
+		nametag.Size = UDim2.fromOffset(textSize.X + 8, textSize.Y + 7)
 			nametag.AnchorPoint = Vector2.new(0.5, 1)
 			nametag.BackgroundColor3 = Color3.new()
 			nametag.BackgroundTransparency = Background.Value
@@ -6381,7 +6397,7 @@ run(function()
 				end
 				
 				if Enchant.Enabled and nametag:FindFirstChild('EnchantIcon') then
-					nametag.EnchantIcon.Image = store.enchants[ent.Player]:async() or ''
+				nametag.EnchantIcon.Image = getCachedAsyncValue(store.enchants, ent.Player) or ''
 				end
 	
 				local size = getfontsize(removeTags(Strings[ent]), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
@@ -6524,8 +6540,14 @@ run(function()
 						ColorFunc[methodused](Color.Hue, Color.Sat, Color.Value)
 					end))
 				end
-				if Loop[methodused] then
-					NameTags:Clean(runService.RenderStepped:Connect(Loop[methodused]))
+			if Loop[methodused] then
+				local lastUpdate = 0
+				NameTags:Clean(runService.Heartbeat:Connect(function()
+					local now = os.clock()
+					if now - lastUpdate < 0.05 then return end
+					lastUpdate = now
+					Loop[methodused]()
+				end))
 				end
 			else
 				if Removed[methodused] then
@@ -7052,8 +7074,14 @@ run(function()
 						ColorFunc[methodused](Color.Hue, Color.Sat, Color.Value)
 					end))
 				end
-				if Loop[methodused] then
-					NameTags:Clean(runService.RenderStepped:Connect(Loop[methodused]))
+			if Loop[methodused] then
+				local lastUpdate = 0
+				NameTags:Clean(runService.Heartbeat:Connect(function()
+					local now = os.clock()
+					if now - lastUpdate < 0.05 then return end
+					lastUpdate = now
+					Loop[methodused]()
+				end))
 				end
 			else
 				if Removed[methodused] then
