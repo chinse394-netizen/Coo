@@ -1903,6 +1903,8 @@ run(function()
     local holding = false
     local clickThread
 	local purchaseInFlight = false
+	local purchaseStartedAt = 0
+	local nextPurchaseAt = 0
     
     local function getShopId()
         if not entitylib.isAlive then return nil end
@@ -1943,13 +1945,13 @@ run(function()
     end
     
     local function purchase(itemType, shopId)
-		if purchaseInFlight then return end
-        if bedwars.BedwarsShopController.alreadyPurchasedMap[itemType] ~= nil then return end
+		if purchaseInFlight or tick() < nextPurchaseAt then return end
     
         local item = bedwars.Shop.getShopItem(itemType, lplr, {shopId = shopId})
         if not item or not canBuy(item) then return end
     
 		purchaseInFlight = true
+		purchaseStartedAt = tick()
 		local callSucceeded, purchasePromise = pcall(function()
 			return bedwars.Client:Get('BedwarsPurchaseItem'):CallServerAsync({
 				shopItem = item,
@@ -1963,21 +1965,16 @@ run(function()
 
 		purchasePromise:andThen(function(suc)
 			purchaseInFlight = false
+			nextPurchaseAt = tick() + 0.2
             if not suc then return end
 			local soundManager = bedwars.SoundManager
 			local soundList = bedwars.SoundList
 			if soundManager and soundManager.playSound and soundList and soundList.BEDWARS_PURCHASE_ITEM then
 				soundManager:playSound(soundList.BEDWARS_PURCHASE_ITEM)
 			end
-            bedwars.Store:dispatch({
-                type = 'BedwarsAddItemPurchased',
-                itemType = itemType
-            })
-            if item.tiered then
-                bedwars.BedwarsShopController.alreadyPurchasedMap[itemType] = true
-            end
 		end):catch(function()
 			purchaseInFlight = false
+			nextPurchaseAt = tick() + 0.2
         end)
     end
     
@@ -1987,6 +1984,9 @@ run(function()
         end
         clickThread = task.spawn(function()
             repeat
+				if purchaseInFlight and (tick() - purchaseStartedAt) > 4 then
+					purchaseInFlight = false
+				end
 	                local shopId = bedwars.AppController and bedwars.AppController:isAppOpen('BedwarsItemShopApp') and store.shopLoaded and getShopId()
                 if shopId then
                     purchase(itemType, shopId)
@@ -2212,9 +2212,9 @@ end)
 									local ok, open = pcall(function() return bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) end)
 									if ok and open then continue end
 				
-									if tick() - store.silasAbilityTime < 2.2 then continue end
-									if tick() - store.terraStompTime < 0.7 then continue end
-									if tick() - store.terraKickTime < 0.5 then continue end
+					if tick() - (store.silasAbilityTime or 0) < 2.2 then continue end
+					if tick() - (store.terraStompTime or 0) < 0.7 then continue end
+					if tick() - (store.terraKickTime or 0) < 0.5 then continue end
 				
 									if store.hand.toolType ~= 'sword' then continue end
 									if bedwars.DaoController and bedwars.DaoController.chargingMaid then continue end
@@ -6724,6 +6724,16 @@ run(function()
 		end
 		return ent.RootPart.Position + Vector3.new(0, ent.HipHeight + 1, 0)
 	end
+
+		local function getCachedAsyncValue(cache, player)
+			local entry = cache and cache[player]
+			if not entry or type(entry.async) ~= 'function' then
+				return nil
+			end
+
+			local success, value = pcall(entry.async, entry)
+			return success and value or nil
+		end
 	
 	local Added = {
 		Normal = function(ent)
@@ -6743,6 +6753,10 @@ run(function()
 			if Distance.Enabled then
 				Strings[ent] = '<font color="rgb(85, 255, 85)">[</font><font color="rgb(255, 255, 255)">%s</font><font color="rgb(85, 255, 85)">]</font> '..Strings[ent]
 			end
+
+			nametag.TextSize = 14 * Scale.Value
+			nametag.FontFace = FontOption.Value
+			local textSize = getfontsize(removeTags(Strings[ent]), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
 	
 			if Equipment.Enabled then
 				for i, v in {'Hand', 'Helmet', 'Chestplate', 'Boots', 'Kit'} do
@@ -6758,33 +6772,35 @@ run(function()
 	
 			task.spawn(function()
 				if Rank.Enabled and ent.Player then
+					local rank = getCachedAsyncValue(store.rank, ent.Player)
+					local rankMeta = rank and bedwars.RankMeta and bedwars.RankMeta[rank]
+					if not rankMeta or not rankMeta.image then return end
 					local Icon = Instance.new('ImageLabel')
 					Icon.Name = 'RankIcon'
 					Icon.Size = UDim2.fromOffset(30, 30)
-					Icon.Position = UDim2.fromOffset(size.X + 10, -4)
+					Icon.Position = UDim2.fromOffset(textSize.X + 10, -4)
 					Icon.BackgroundTransparency = 1
-					Icon.Image = store.rank[ent.Player]:async() and bedwars.RankMeta[store.rank[ent.Player]:async()].image or ''
+					Icon.Image = rankMeta.image
 					Icon.Parent = nametag
 				end
 			end)
 	
 			task.spawn(function()
 				if Enchant.Enabled and ent.Player then
+					local enchant = getCachedAsyncValue(store.enchants, ent.Player)
+					if not enchant then return end
 					local Icon = Instance.new('ImageLabel')
 					Icon.Name = 'EnchantIcon'
 					Icon.Size = UDim2.fromOffset(30, 30)
 					Icon.Position = UDim2.fromOffset(-30, -4)
 					Icon.BackgroundTransparency = 1
-					Icon.Image = store.enchants[ent.Player]:async() or ''
+					Icon.Image = enchant
 					Icon.Parent = nametag
 				end
 			end)
 	
-			nametag.TextSize = 14 * Scale.Value
-			nametag.FontFace = FontOption.Value
-			local size = getfontsize(removeTags(Strings[ent]), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
 			nametag.Name = ent.Player and ent.Player.Name or ent.Character.Name
-			nametag.Size = UDim2.fromOffset(size.X + 8, size.Y + 7)
+			nametag.Size = UDim2.fromOffset(textSize.X + 8, textSize.Y + 7)
 			nametag.AnchorPoint = Vector2.new(0.5, 1)
 			nametag.BackgroundColor3 = Color3.new()
 			nametag.BackgroundTransparency = Background.Value
@@ -6886,7 +6902,7 @@ run(function()
 				end
 				
 				if Enchant.Enabled and nametag:FindFirstChild('EnchantIcon') then
-					nametag.EnchantIcon.Image = store.enchants[ent.Player]:async() or ''
+						nametag.EnchantIcon.Image = getCachedAsyncValue(store.enchants, ent.Player) or ''
 				end
 	
 				local size = getfontsize(removeTags(Strings[ent]), nametag.TextSize, nametag.FontFace, Vector2.new(100000, 100000))
