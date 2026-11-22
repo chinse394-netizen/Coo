@@ -5263,105 +5263,453 @@ end)
 
 							
 run(function()
-	local TargetPart
-	local Targets
-	local FOV
-	local OtherProjectiles
-	local rayCheck = RaycastParams.new()
-	rayCheck.FilterType = Enum.RaycastFilterType.Include
-	rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
-	local old
-	
-	local ProjectileAimbot = vape.Categories.Blatant:CreateModule({
-		Name = 'ProjectileAimbot',
-		Function = function(callback)
-			if callback then
-				old = bedwars.ProjectileController.calculateImportantLaunchValues
-				bedwars.ProjectileController.calculateImportantLaunchValues = function(...)
-					local self, projmeta, worldmeta, origin, shootpos = ...
-					local plr = entitylib.EntityMouse({
-						Part = 'RootPart',
-						Range = FOV.Value,
-						Players = Targets.Players.Enabled,
-						NPCs = Targets.NPCs.Enabled,
-						Wallcheck = Targets.Walls.Enabled,
-						Origin = entitylib.isAlive and (shootpos or entitylib.character.RootPart.Position) or Vector3.zero
-					})
-	
-					if plr then
-						local pos = shootpos or self:getLaunchPosition(origin)
-						if not pos then
-							return old(...)
-						end
-	
-						if (not OtherProjectiles.Enabled) and not projmeta.projectile:find('arrow') then
-							return old(...)
-						end
-	
-						local meta = projmeta:getProjectileMeta()
-						local lifetime = (worldmeta and meta.predictionLifetimeSec or meta.lifetimeSec or 3)
-						local gravity = (meta.gravitationalAcceleration or 196.2) * projmeta.gravityMultiplier
-						local projSpeed = (meta.launchVelocity or 100)
-						local offsetpos = pos + (projmeta.projectile == 'owl_projectile' and Vector3.zero or projmeta.fromPositionOffset)
-						local balloons = plr.Character:GetAttribute('InflatedBalloons')
-						local playerGravity = workspace.Gravity
-	
-						if balloons and balloons > 0 then
-							playerGravity = (workspace.Gravity * (1 - ((balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))))
-						end
-	
-						if plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
-							playerGravity = 6
-						end
-	
-						if plr.Player:GetAttribute('IsOwlTarget') then
-							for _, owl in collectionService:GetTagged('Owl') do
-								if owl:GetAttribute('Target') == plr.Player.UserId and owl:GetAttribute('Status') == 2 then
-									playerGravity = 0
-								end
-							end
-						end
-	
-						local newlook = CFrame.new(offsetpos, plr[TargetPart.Value].Position) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
-						local calc = prediction.SolveTrajectory(newlook.p, projSpeed, gravity, plr[TargetPart.Value].Position, projmeta.projectile == 'telepearl' and Vector3.zero or plr[TargetPart.Value].Velocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
-						if calc then
-							targetinfo.Targets[plr] = tick() + 1
-							return {
-								initialVelocity = CFrame.new(newlook.Position, calc).LookVector * projSpeed,
-								positionFrom = offsetpos,
-								deltaT = lifetime,
-								gravitationalAcceleration = gravity,
-								drawDurationSeconds = 5
-							}
-						end
-					end
-	
-					return old(...)
-				end
-			else
-				bedwars.ProjectileController.calculateImportantLaunchValues = old
-			end
-		end,
-		Tooltip = 'Silently adjusts your aim towards the enemy'
-	})
-	Targets = ProjectileAimbot:CreateTargets({
-		Players = true,
-		Walls = true
-	})
-	TargetPart = ProjectileAimbot:CreateDropdown({
-		Name = 'Part',
-		List = {'RootPart', 'Head'}
-	})
-	FOV = ProjectileAimbot:CreateSlider({
-		Name = 'FOV',
-		Min = 1,
-		Max = 1000,
-		Default = 1000
-	})
-	OtherProjectiles = ProjectileAimbot:CreateToggle({
-		Name = 'Other Projectiles',
-		Default = true
-	})
+    local Prediction
+    local AutoCharge
+    local TargetPart
+    local Targets
+    local FOV
+    local Sort
+    local Horizontal
+    local Vertical
+    local OtherProjectiles
+    local Blacklist
+    local rayCheck = RaycastParams.new()
+    rayCheck.FilterType = Enum.RaycastFilterType.Include
+    rayCheck.FilterDescendantsInstances = {workspace:FindFirstChild('Map')}
+    local launchHook
+
+    -- ============================================================
+    -- Projectile Aimbot DEBUG
+    -- Writes levi_shakingrass/pa_debug.txt. For each shot it records what PA
+    -- predicted vs where the target actually was when the projectile arrived,
+    -- so a missed shot can be diagnosed: cross-track = they dodged unpredictably,
+    -- along-track = lead/latency off, vertical = jump/gravity off. It also logs
+    -- what the model had learned (strafe/turn/jump/knockback) at fire time.
+    -- ============================================================
+    local ProjectileAimbot
+    local PADebug
+    local paDebugPending = {}
+    local paShotId = 0
+    local paDebugFile = 'levi_shakingrass/pa_debug.txt'
+    local paWeaponStats = {}
+    local paDeathHooked = setmetatable({}, {__mode = 'k'})
+
+    local function paLog(line)
+        pcall(function()
+            if appendfile then
+                appendfile(paDebugFile, line .. '\n')
+            else
+                local ex = (isfile and isfile(paDebugFile) and readfile(paDebugFile)) or ''
+                writefile(paDebugFile, ex .. line .. '\n')
+            end
+        end)
+    end
+
+    local function paFmtV(v)
+        if typeof(v) ~= 'Vector3' then return 'nil' end
+        return string.format('(%.1f, %.1f, %.1f)', v.X, v.Y, v.Z)
+    end
+    local function paFmtN(n, d)
+        if type(n) ~= 'number' then return 'nil' end
+        return string.format('%.' .. (d or 3) .. 'f', n)
+    end
+
+    local paFinishAndCopy
+
+    local paLastShotRoot, paLastShotTime = nil, 0
+    local function paDebugCapture(plr, origin, aimPart, predImpact, predTime, projmeta)
+        local root = plr.RootPart
+        if not root then return end
+        local now = workspace:GetServerTimeNow()
+        -- Dedupe: the launch hook fires twice per trigger-pull (predict + replicate).
+        if root == paLastShotRoot and now - paLastShotTime < 0.03 then return end
+        paLastShotRoot, paLastShotTime = root, now
+        local bias, epochRate = prediction.getLatencyBias()
+        local spread, spreadN = prediction.getResidualSpread()
+        local latency = prediction.getLatency()
+        -- What are we shooting WITH (crossbow / headhunter / bow ...) and firing?
+        local weapon = 'unknown'
+        pcall(function()
+            if store.hand and store.hand.tool and store.hand.tool.Name then
+                weapon = store.hand.tool.Name
+            end
+        end)
+        local projName = (projmeta and projmeta.projectile) or 'unknown'
+        paShotId += 1
+        table.insert(paDebugPending, {
+            id = paShotId,
+            fireTime = now,
+            -- Measure at travelTime + latency: predImpact was extrapolated from the
+            -- replicated (stale-by-latency) position by exactly latency+travelTime, so
+            -- the honest comparison waits that long for the replicated stream to catch up.
+            arriveTime = now + (predTime or 0) + latency,
+            travelTime = predTime or 0,
+            root = root,
+            plrName = (plr.Player and plr.Player.Name) or 'NPC',
+            weapon = weapon,
+            projName = projName,
+            origin = origin,
+            firePos = root.Position,
+            fireVel = root.Velocity,
+            aimOffset = (typeof(aimPart) == 'Vector3') and (aimPart - root.Position) or Vector3.zero,
+            predImpact = predImpact,
+            latency = latency,
+            rawLatency = prediction.getRawLatency(),
+            bias = bias,
+            epochRate = epochRate,
+            spread = spread,
+            spreadN = spreadN,
+            motion = prediction.getMotionDebug(root),
+            dist = (root.Position - origin).Magnitude,
+        })
+
+        -- Auto-copy the log when the target we're shooting dies (the kill).
+        local char = root.Parent
+        if char and not paDeathHooked[char] then
+            paDeathHooked[char] = true
+            local hum = char:FindFirstChildOfClass('Humanoid')
+            if hum then
+                local charName = (plr.Player and plr.Player.Name) or char.Name
+                local conn
+                conn = hum.Died:Connect(function()
+                    if conn then conn:Disconnect() end
+                    task.wait(0.25) -- let the killing shot resolve first
+                    paFinishAndCopy('killed ' .. charName)
+                end)
+                ProjectileAimbot:Clean(conn)
+            end
+        end
+    end
+
+    local function paDebugWrite(s)
+        local root = s.root
+        if not root or not root.Parent then
+            paLog(string.format('#%d  target gone before arrival (died/left) | weapon: %s | proj: %s | led dist %s | travel %ss',
+                s.id, tostring(s.weapon), tostring(s.projName), paFmtN(s.dist, 1), paFmtN(s.travelTime)))
+            paLog('')
+            return
+        end
+        local actualPos = root.Position
+        local actualVel = root.Velocity
+        -- Aim-part actual position at arrival (rigid offset from root)
+        local actualAim = actualPos + s.aimOffset
+        -- PA prediction error against where PA aimed the projectile to arrive
+        local resPA = (typeof(s.predImpact) == 'Vector3') and (actualAim - s.predImpact) or Vector3.zero
+        -- Naive constant-velocity lead (what a dumb solver would have aimed)
+        local naive = s.firePos + s.fireVel * (s.travelTime + (s.latency or 0))
+        local resNaive = actualPos - naive
+        -- Decompose PA error along/cross the fire-time horizontal heading
+        local flat = Vector3.new(s.fireVel.X, 0, s.fireVel.Z)
+        local dir = flat.Magnitude > 0.1 and flat.Unit or Vector3.zero
+        local flatRes = Vector3.new(resPA.X, 0, resPA.Z)
+        local along = (dir.Magnitude > 0) and flatRes:Dot(dir) or 0
+        local cross = (dir.Magnitude > 0) and (flatRes - dir * along).Magnitude or flatRes.Magnitude
+        local vert = resPA.Y
+        local m = s.motion
+        -- Accumulate per-weapon stats for the end-of-fight summary
+        local st = paWeaponStats[s.weapon or 'unknown']
+        if not st then
+            st = {shots = 0, miss = 0, along = 0, cross = 0, vert = 0}
+            paWeaponStats[s.weapon or 'unknown'] = st
+        end
+        st.shots += 1
+        st.miss += resPA.Magnitude
+        st.along += math.abs(along)
+        st.cross += cross
+        st.vert += math.abs(vert)
+        paLog(string.format('#%d  %s | weapon: %s | proj: %s | %s | dist %ss | travel %ss',
+            s.id, s.plrName, tostring(s.weapon), tostring(s.projName), os.date('%H:%M:%S'), paFmtN(s.dist, 1), paFmtN(s.travelTime)))
+        paLog(string.format('   MISS total %ss | along %ss (%s) | cross %ss (dodge) | vert %ss',
+            paFmtN(resPA.Magnitude, 1),
+            paFmtN(math.abs(along), 1), along >= 0 and 'under-led' or 'over-led',
+            paFmtN(cross, 1), paFmtN(vert, 1)))
+        paLog(string.format('   naive-lead miss %ss  ->  PA improved by %ss',
+            paFmtN(resNaive.Magnitude, 1), paFmtN(resNaive.Magnitude - resPA.Magnitude, 1)))
+        paLog(string.format('   latency %ss (raw %ss, bias %ss) | hitRate %s | residualSpread %s (n=%d)',
+            paFmtN(s.latency), paFmtN(s.rawLatency), paFmtN(s.bias),
+            s.epochRate and paFmtN(s.epochRate, 2) or 'n/a', paFmtN(s.spread, 2), s.spreadN or 0))
+        paLog(string.format('   fireVel %s (h.spd %ss) | arriveVel %s',
+            paFmtV(s.fireVel), paFmtN(flat.Magnitude, 1), paFmtV(actualVel)))
+        if m then
+            paLog(string.format('   model: strafeSeen %s half %ss | turnSeen %s rate %s | jumpV %s period %ss | flying %s | knockback %s | missRate %s | updInt %ss',
+                tostring(m.strafeSeen or 0), paFmtN(m.strafeHalf, 2),
+                tostring(m.turnSeen or 0), paFmtN(m.turnRate, 2),
+                paFmtN(m.jumpVelocity, 1), paFmtN(m.jumpPeriod, 2),
+                tostring(m.flying or false), tostring(m.knockback or false),
+                paFmtN(m.missRate, 1), paFmtN(m.stale)))
+        else
+            paLog('   model: (no per-target state — root not passed / target too new)')
+        end
+        paLog('')
+    end
+
+    local function paDebugResolve()
+        if #paDebugPending == 0 then return end
+        local now = workspace:GetServerTimeNow()
+        for i = #paDebugPending, 1, -1 do
+            local s = paDebugPending[i]
+            if now >= s.arriveTime then
+                table.remove(paDebugPending, i)
+                paDebugWrite(s)
+            end
+        end
+    end
+
+    -- Resolve remaining shots, write a per-weapon summary, and copy the whole
+    -- log to the clipboard. Fired automatically when a shot target dies.
+    paFinishAndCopy = function(reason)
+        for i = #paDebugPending, 1, -1 do
+            local s = paDebugPending[i]
+            table.remove(paDebugPending, i)
+            paDebugWrite(s)
+        end
+        paLog('=== SUMMARY (' .. tostring(reason) .. ') ===')
+        local any = false
+        for weap, st in paWeaponStats do
+            if st.shots > 0 then
+                any = true
+                paLog(string.format('%s: %d shots | avg miss %ss | along %ss | cross %ss | vert %ss',
+                    weap, st.shots,
+                    paFmtN(st.miss / st.shots, 1), paFmtN(st.along / st.shots, 1),
+                    paFmtN(st.cross / st.shots, 1), paFmtN(st.vert / st.shots, 1)))
+            end
+        end
+        if not any then paLog('(no measured shots)') end
+        paLog('')
+        local copied = false
+        pcall(function()
+            if setclipboard and isfile and isfile(paDebugFile) then
+                setclipboard(readfile(paDebugFile))
+                copied = true
+            end
+        end)
+        notif('Projectile Aimbot', (copied and 'Debug copied to clipboard' or 'Debug saved (clipboard unavailable)') .. ' — ' .. tostring(reason), 6, 'info')
+    end
+    
+    local function getMousePosition()
+    	if inputService.TouchEnabled then
+    		return gameCamera.ViewportSize / 2
+    	end
+    	return inputService.GetMouseLocation(inputService)
+    end
+    
+    local function getPosition(ent, proj)
+    	if TargetPart.Value == 'Closest' then
+    		local localPosition, magnitude, part = getMousePosition(), 9e9, nil
+    		for _, v in ent:GetChildren() do
+    			if pcall(function() return v.Position; end) then
+    				local position, vis = gameCamera.WorldToViewportPoint(gameCamera, v.Position)
+    
+    				if vis then
+    					local mag = (localPosition - Vector2.new(position.x, position.y)).Magnitude
+    
+    					if mag < magnitude then
+    						magnitude = mag
+    						part = v
+    					end
+    				end
+    			end
+    		end
+    		return part and part.Position or ent.PrimaryPart.Position
+    	elseif TargetPart.Value == 'Dynamic' then
+    		local tool = store.hand.tool
+    		if tool and tool.Name:find('headhunter') then
+    			return ent.Head.Position
+    		end
+    		return ent.PrimaryPart.Position
+    	end
+    	return
+    end
+
+    ProjectileAimbot = vape.Categories.Blatant:CreateModule({
+    	Name = 'Projectile Aimbot',
+    	Disabled = not canDebug,
+    	Function = function(callback)
+    		if callback then
+    			oldd = bedwars.BlockKickerKitController.getKickBlockProjectileOriginPosition
+    			-- Resolver runs while PA is on; it no-ops unless Debug Log captured shots.
+    			ProjectileAimbot:Clean(runService.Heartbeat:Connect(paDebugResolve))
+    			launchHook = bedwars.ProjectileLaunchHook:Add('ProjectileAimbot', 100, function(nextLaunch, ...)
+    				local self, projmeta, worldmeta, origin, shootpos = ...
+    				local plr = entitylib.EntityMouse({
+    					Part = 'RootPart',
+    					Range = FOV.Value,
+    					Players = Targets.Players.Enabled,
+    					NPCs = Targets.NPCs.Enabled,
+    					Wallcheck = Targets.Walls.Enabled,
+    					Sort = sortmethods[Sort.Value or 'Distance'],
+    					Origin = entitylib.isAlive and (shootpos or entitylib.character.RootPart.Position) or Vector3.zero,
+    				})
+    
+    				if plr then
+    					local pos = shootpos or self:getLaunchPosition(origin)
+    					if not pos then
+    						return nextLaunch(...)
+    					end
+    
+    					if (not OtherProjectiles.Enabled) and not projmeta.projectile:find('arrow') then
+    						return nextLaunch(...)
+    					end
+    
+    					if table.find(Blacklist.ListEnabled or {}, ((projmeta.projectile == 'glue_trap' or projmeta.projectile == 'glue_projectile') and 'gloop' or projmeta.projectile)) then
+    						return nextLaunch(...)
+    					end
+    
+    					local meta = projmeta:getProjectileMeta()
+    					local lifetime = (worldmeta and meta.predictionLifetimeSec or meta.lifetimeSec or 3)
+    					local gravity = (meta.gravitationalAcceleration or 196.2) * projmeta.gravityMultiplier
+    					local projSpeed = (meta.launchVelocity or 100)
+    					local offsetpos = pos + (projmeta.projectile == 'owl_projectile' and Vector3.zero or projmeta.fromPositionOffset)
+    					local balloons = plr.Character:GetAttribute('InflatedBalloons')
+    					local playerGravity = workspace.Gravity
+    
+    					if balloons and balloons > 0 then
+    						playerGravity = (workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975)))
+    					end
+    
+    					if plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
+    						playerGravity = 6
+    					end
+    
+    					if plr.Player and plr.Player:GetAttribute('IsOwlTarget') then
+    						for _, owl in collectionService:GetTagged('Owl') do
+    							if owl:GetAttribute('Target') == plr.Player.UserId and owl:GetAttribute('Status') == 2 then
+    								playerGravity = 0
+    							end
+    						end
+    					end
+    
+    					local targetpos = getPosition(plr.Character) or plr[TargetPart.Value].Position
+    					local newlook = CFrame.new(offsetpos, targetpos) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
+    					-- Pass the target's RootPart so the prediction library can learn its per-target
+    					-- motion (strafe/turn/jump/knockback) and apply latency compensation internally.
+    					-- targetpos stays the aim part; the library derives the aim/root offset itself.
+    					local targetVelocity = projmeta.projectile == 'telepearl' and Vector3.zero or plr.RootPart.Velocity
+    					local calc, predImpact, predTime = prediction.SolveTrajectory(newlook.p, projSpeed * Prediction.Value, gravity, targetpos, targetVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, nil, plr.RootPart)
+    					-- Directional prediction: independently scale how far we lead the target
+    					-- sideways (Horizontal, the X/Z plane) vs while it rises or falls (Vertical, Y).
+    					-- 1 = the solver's own lead, <1 under-leads that axis, >1 over-leads it. We
+    					-- offset the aim point by the extra/less lead over the solved travel time and
+    					-- re-solve so gravity is recomputed for the new point.
+    					if calc and predTime and (Horizontal.Value ~= 1 or Vertical.Value ~= 1) then
+    						local lead = Vector3.new(
+    							targetVelocity.X * (Horizontal.Value - 1),
+    							targetVelocity.Y * (Vertical.Value - 1),
+    							targetVelocity.Z * (Horizontal.Value - 1)
+    						) * predTime
+    						calc = prediction.SolveTrajectory(newlook.p, projSpeed * Prediction.Value, gravity, targetpos + lead, targetVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, nil, plr.RootPart) or calc
+    					end
+    					if calc then
+    						if PADebug and PADebug.Enabled then
+    							paDebugCapture(plr, offsetpos, targetpos, predImpact, predTime, projmeta)
+    						end
+    						targetinfo.Targets[plr] = tick() + 1
+    						return {
+    							initialVelocity = CFrame.new(newlook.Position, calc).LookVector * (projSpeed * (AutoCharge.Enabled and 1 or projmeta.velocityMultiplier)),
+    							positionFrom = offsetpos,
+    							deltaT = lifetime,
+    							gravitationalAcceleration = gravity,
+    							drawDurationSeconds = AutoCharge.Enabled and 5 or projmeta.drawDurationSeconds,
+    						}
+    					end
+    				end
+    
+    				return nextLaunch(...)
+    			end)
+    		else
+    			if launchHook then
+    				launchHook()
+    				launchHook = nil
+    			end
+    		end
+    	end,
+    	Tooltip = 'Silently adjusts your aim towards the enemy',
+    })
+    Targets = ProjectileAimbot:CreateTargets({
+    	Players = true,
+    	Walls = true,
+    })
+    TargetPart = ProjectileAimbot:CreateDropdown({
+    	Name = 'Part',
+    	List = {'RootPart', 'Head', 'Dynamic', 'Closest'},
+    })
+    local methods = {'Damage', 'Distance'}
+    for i in sortmethods do
+    	if not table.find(methods, i) then
+    		table.insert(methods, i)
+    	end
+    end
+    Sort = ProjectileAimbot:CreateDropdown({
+    	Name = 'Target Mode',
+    	List = methods,
+    	Default = 'Distance',
+    })
+    Prediction = ProjectileAimbot:CreateSlider({
+    	Name = 'Prediction',
+    	Min = 0.1,
+    	Max = 2,
+    	Default = 1,
+    	Decimal = 10,
+    })
+    FOV = ProjectileAimbot:CreateSlider({
+    	Name = 'FOV',
+    	Min = 1,
+    	Max = 1000,
+    	Default = 1000,
+    })
+    Horizontal = ProjectileAimbot:CreateSlider({
+    	Name = 'Horizontal prediction',
+    	Min = 0,
+    	Max = 2,
+    	Default = 1,
+    	Decimal = 100,
+    	Tooltip = 'Scales how far ahead of the target you aim sideways',
+    })
+    Vertical = ProjectileAimbot:CreateSlider({
+    	Name = 'Vertical prediction',
+    	Min = 0,
+    	Max = 2,
+    	Default = 1,
+    	Decimal = 100,
+    	Tooltip = 'Scales how far ahead of the target you aim while it rises or falls',
+    })
+    AutoCharge = ProjectileAimbot:CreateToggle({
+    	Name = 'Auto Charge',
+    	Default = true,
+    	Tooltip = 'Fully charges your bow, Allowing your projectile to deal more damage',
+    })
+    OtherProjectiles = ProjectileAimbot:CreateToggle({
+    	Name = 'Other Projectiles',
+    	Default = true,
+    	Function = function(call)
+    		if Blacklist and Blacklist.Object then
+    			Blacklist.Object.Visible = call
+    		end
+    	end,
+    })
+    Blacklist = ProjectileAimbot:CreateTextList({
+    	Name = 'Blacklist',
+    	Default = {'gloop', 'telepearl'},
+    	Darker = true,
+    	Placeholder = 'projectile',
+    })
+    PADebug = ProjectileAimbot:CreateToggle({
+    	Name = 'Debug Log',
+    	Default = false,
+    	Function = function(call)
+    		if call then
+    			paDebugPending = {}
+    			paWeaponStats = {}
+    			pcall(function()
+    				writefile(paDebugFile, '=== Projectile Aimbot debug — ' .. os.date('%Y-%m-%d %H:%M:%S') .. ' ===\n'
+    					.. 'along = lead/latency error (under-led = arrow behind them) | cross = they dodged | vert = jump/gravity\n'
+    					.. 'auto-copies to clipboard when the target you are shooting dies\n\n')
+    			end)
+    			notif('Projectile Aimbot', 'Debug on — auto-copies on kill', 5, 'info')
+    		end
+    	end,
+    	Tooltip = 'Logs each shot vs where the target actually was, to pa_debug.txt in your workspace',
+    })
 end)
 	
 run(function()
