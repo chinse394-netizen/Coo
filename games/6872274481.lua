@@ -2802,6 +2802,7 @@ run(function()
 	local OtherProjectiles
 	local Blacklist
 	local oldNamecall
+	local projectileRemote
 	local random = Random.new()
 
 	local function getSilentTargetPosition(entity)
@@ -2889,9 +2890,18 @@ run(function()
 					end
 					return
 				end
+				local ok, remote = pcall(function()
+					return bedwars.Client:Get(remotes.FireProjectile).instance
+				end)
+				if not ok or not remote then
+					notif('SilentAim', 'Projectile remote is unavailable.', 5, 'warning')
+					SilentAim:Toggle()
+					return
+				end
+				projectileRemote = remote
 
 				oldNamecall = hookmetamethod(game, '__namecall', newcclosure(function(self, ...)
-					if SilentAim.Enabled and not checkcaller() and getnamecallmethod() == 'InvokeServer' and tostring(self) == 'ProjectileFire' then
+					if SilentAim.Enabled and getnamecallmethod() == 'InvokeServer' and self == projectileRemote then
 						local arguments = table.pack(...)
 						local ok, redirectedVelocity = pcall(solveSilent, arguments)
 						if ok and typeof(redirectedVelocity) == 'Vector3' then
@@ -5703,7 +5713,7 @@ run(function()
 	    						return fallback()
 	    					end
     					local lifetime = (worldmeta and meta.predictionLifetimeSec or meta.lifetimeSec or 3)
-    					local gravity = (meta.gravitationalAcceleration or 196.2) * projmeta.gravityMultiplier
+	    					local gravity = (meta.gravitationalAcceleration or 196.2) * (projmeta.gravityMultiplier or 1)
     					local projSpeed = (meta.launchVelocity or 100)
 	    					local offsetpos = pos + (projmeta.projectile == 'owl_projectile' and Vector3.zero or projmeta.fromPositionOffset or Vector3.zero)
     					local balloons = plr.Character:GetAttribute('InflatedBalloons')
@@ -5755,16 +5765,27 @@ run(function()
     						end
     						targetinfo.Targets[plr] = tick() + 1
     						return {
-    							initialVelocity = CFrame.new(newlook.Position, calc).LookVector * (projSpeed * (AutoCharge.Enabled and 1 or projmeta.velocityMultiplier)),
+	    							initialVelocity = CFrame.new(newlook.Position, calc).LookVector * (projSpeed * (AutoCharge.Enabled and 1 or projmeta.velocityMultiplier or 1)),
     							positionFrom = offsetpos,
     							deltaT = lifetime,
     							gravitationalAcceleration = gravity,
-    							drawDurationSeconds = AutoCharge.Enabled and 5 or projmeta.drawDurationSeconds,
+	    							drawDurationSeconds = AutoCharge.Enabled and 5 or projmeta.drawDurationSeconds or 1,
     						}
     					end
     				end
     
 				return fallback()
+			end
+			local unsafeHook = hook
+			hook = function(...)
+				local result = table.pack(pcall(unsafeHook, ...))
+				if result[1] then
+					return table.unpack(result, 2, result.n)
+				end
+				if shared.VapeDeveloper then
+					warn('[Projectile Aimbot] '..tostring(result[2]))
+				end
+				return old(...)
 			end
 			bedwars.ProjectileController.calculateImportantLaunchValues = hook
 			launchHook = function()
