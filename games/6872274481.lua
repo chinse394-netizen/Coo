@@ -5268,10 +5268,13 @@ run(function()
     local TargetPart
     local Targets
     local FOV
+	local Distance
     local Sort
     local Horizontal
     local Vertical
     local OtherProjectiles
+	local UseUmeko
+	local Potions
     local Blacklist
     local rayCheck = RaycastParams.new()
     rayCheck.FilterType = Enum.RaycastFilterType.Include
@@ -5523,14 +5526,23 @@ run(function()
 
     ProjectileAimbot = vape.Categories.Blatant:CreateModule({
     	Name = 'Projectile Aimbot',
-    	Disabled = not canDebug,
     	Function = function(callback)
     		if callback then
-    			oldd = bedwars.BlockKickerKitController.getKickBlockProjectileOriginPosition
+			if launchHook then return end
+			local old = bedwars.ProjectileController and bedwars.ProjectileController.calculateImportantLaunchValues
+			if type(old) ~= 'function' then
+				notif('Projectile Aimbot', 'Projectile controller is unavailable.', 5, 'warning')
+				ProjectileAimbot:Toggle()
+				return
+			end
     			-- Resolver runs while PA is on; it no-ops unless Debug Log captured shots.
     			ProjectileAimbot:Clean(runService.Heartbeat:Connect(paDebugResolve))
-    			launchHook = bedwars.ProjectileLaunchHook:Add('ProjectileAimbot', 100, function(nextLaunch, ...)
-    				local self, projmeta, worldmeta, origin, shootpos = ...
+			local hook
+			hook = function(self, projmeta, worldmeta, origin, shootpos, ...)
+				local args = table.pack(...)
+				local function fallback()
+					return old(self, projmeta, worldmeta, origin, shootpos, table.unpack(args, 1, args.n))
+				end
     				local plr = entitylib.EntityMouse({
     					Part = 'RootPart',
     					Range = FOV.Value,
@@ -5544,15 +5556,18 @@ run(function()
     				if plr then
     					local pos = shootpos or self:getLaunchPosition(origin)
     					if not pos then
-    						return nextLaunch(...)
+						return fallback()
     					end
     
-    					if (not OtherProjectiles.Enabled) and not projmeta.projectile:find('arrow') then
-    						return nextLaunch(...)
+					local projectileName = projmeta.projectile or ''
+					if projectileName:find('splash_potion', 1, true) then
+						if not Potions.Enabled then return fallback() end
+					elseif (not OtherProjectiles.Enabled) and not projectileName:find('arrow', 1, true) and not (UseUmeko.Enabled and projectileName:find('ninja_chakram', 1, true)) then
+						return fallback()
     					end
     
     					if table.find(Blacklist.ListEnabled or {}, ((projmeta.projectile == 'glue_trap' or projmeta.projectile == 'glue_projectile') and 'gloop' or projmeta.projectile)) then
-    						return nextLaunch(...)
+						return fallback()
     					end
     
     					local meta = projmeta:getProjectileMeta()
@@ -5614,8 +5629,14 @@ run(function()
     					end
     				end
     
-    				return nextLaunch(...)
-    			end)
+				return fallback()
+			end
+			bedwars.ProjectileController.calculateImportantLaunchValues = hook
+			launchHook = function()
+				if bedwars.ProjectileController.calculateImportantLaunchValues == hook then
+					bedwars.ProjectileController.calculateImportantLaunchValues = old
+				end
+			end
     		else
     			if launchHook then
     				launchHook()
