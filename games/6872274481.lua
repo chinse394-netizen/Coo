@@ -2792,6 +2792,134 @@ run(function()
 end)
 	
 run(function()
+	local SilentAim
+	local Targets
+	local TargetPart
+	local Sort
+	local Prediction
+	local FOV
+	local HitChance
+	local OtherProjectiles
+	local Blacklist
+	local oldNamecall
+	local random = Random.new()
+
+	local function getSilentTargetPosition(entity)
+		if TargetPart.Value == 'Head' and entity.Head then
+			return entity.Head.Position
+		end
+		return entity.RootPart and entity.RootPart.Position
+	end
+
+	local function solveSilent(arguments)
+		local projectileType = arguments[3]
+		local origin = arguments[4]
+		local velocity = arguments[6]
+		if type(projectileType) ~= 'string' or typeof(origin) ~= 'Vector3' or typeof(velocity) ~= 'Vector3' then
+			return
+		end
+
+		if not OtherProjectiles.Enabled and not projectileType:find('arrow', 1, true) then
+			return
+		end
+		if table.find(Blacklist.ListEnabled or {}, (projectileType == 'glue_trap' or projectileType == 'glue_projectile') and 'gloop' or projectileType) then
+			return
+		end
+		if random:NextNumber(0, 100) > HitChance.Value then
+			return
+		end
+
+		local projectileMeta = bedwars.ProjectileMeta[projectileType]
+		local speed = velocity.Magnitude
+		if not projectileMeta or speed <= 0 then
+			return
+		end
+
+		local target = entitylib.EntityMouse({
+			Part = 'RootPart',
+			Range = FOV.Value,
+			Players = Targets.Players.Enabled,
+			NPCs = Targets.NPCs.Enabled,
+			Wallcheck = Targets.Walls.Enabled,
+			Sort = sortmethods[Sort.Value or 'Distance'],
+			Origin = origin
+		})
+		if not target then
+			return
+		end
+
+		local targetPosition = getSilentTargetPosition(target)
+		if not targetPosition then
+			return
+		end
+
+		local playerGravity = workspace.Gravity
+		local balloons = target.Character and target.Character:GetAttribute('InflatedBalloons')
+		if balloons and balloons > 0 then
+			playerGravity = workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))
+		end
+
+		local targetVelocity = projectileType == 'telepearl' and Vector3.zero or (target.RootPart.AssemblyLinearVelocity or target.RootPart.Velocity)
+		local aimPosition = prediction.SolveTrajectory(
+			origin,
+			speed * Prediction.Value,
+			projectileMeta.gravitationalAcceleration or 196.2,
+			targetPosition,
+			targetVelocity,
+			playerGravity,
+			target.HipHeight,
+			target.Jumping and 42.6 or nil
+		)
+		if not aimPosition then
+			return
+		end
+
+		targetinfo.Targets[target] = tick() + 1
+		return CFrame.lookAt(origin, aimPosition).LookVector * speed
+	end
+
+	SilentAim = vape.Categories.Combat:CreateModule({
+		Name = 'SilentAim',
+		Function = function(callback)
+			if callback then
+				if oldNamecall or not hookmetamethod or not newcclosure then
+					if not oldNamecall then
+						notif('SilentAim', 'Your executor does not support native namecall hooks.', 5, 'warning')
+						SilentAim:Toggle()
+					end
+					return
+				end
+
+				oldNamecall = hookmetamethod(game, '__namecall', newcclosure(function(self, ...)
+					if SilentAim.Enabled and not checkcaller() and getnamecallmethod() == 'InvokeServer' and tostring(self) == 'ProjectileFire' then
+						local arguments = table.pack(...)
+						local ok, redirectedVelocity = pcall(solveSilent, arguments)
+						if ok and typeof(redirectedVelocity) == 'Vector3' then
+							arguments[6] = redirectedVelocity
+						end
+						return oldNamecall(self, table.unpack(arguments, 1, arguments.n))
+					end
+					return oldNamecall(self, ...)
+				end))
+			end
+		end,
+		Tooltip = 'Redirects supported projectile server shots toward the selected target.'
+	})
+	Targets = SilentAim:CreateTargets({Players = true, Walls = true})
+	TargetPart = SilentAim:CreateDropdown({Name = 'Part', List = {'RootPart', 'Head'}})
+	local methods = {'Damage', 'Distance'}
+	for name in sortmethods do
+		if not table.find(methods, name) then table.insert(methods, name) end
+	end
+	Sort = SilentAim:CreateDropdown({Name = 'Target Mode', List = methods, Default = 'Distance'})
+	Prediction = SilentAim:CreateSlider({Name = 'Prediction', Min = 0.1, Max = 2, Default = 1, Decimal = 10})
+	FOV = SilentAim:CreateSlider({Name = 'FOV', Min = 1, Max = 1000, Default = 1000})
+	HitChance = SilentAim:CreateSlider({Name = 'Hit Chance', Min = 0, Max = 100, Default = 100, Suffix = '%'})
+	OtherProjectiles = SilentAim:CreateToggle({Name = 'Other Projectiles', Default = true})
+	Blacklist = SilentAim:CreateTextList({Name = 'Blacklist', Default = {'gloop', 'telepearl'}, Darker = true, Placeholder = 'projectile'})
+end)
+
+run(function()
 	local Mode
 	local Expand
 	local objects, set = {}
@@ -5515,11 +5643,11 @@ run(function()
     		end
     		return part and part.Position or ent.PrimaryPart.Position
     	elseif TargetPart.Value == 'Dynamic' then
-    		local tool = store.hand.tool
-    		if tool and tool.Name:find('headhunter') then
+	    		local tool = store.hand and store.hand.tool
+	    		if tool and tool.Name and tool.Name:find('headhunter', 1, true) and ent.Head then
     			return ent.Head.Position
     		end
-    		return ent.PrimaryPart.Position
+	    		return ent.PrimaryPart and ent.PrimaryPart.Position
     	end
     	return
     end
@@ -5570,11 +5698,14 @@ run(function()
 						return fallback()
     					end
     
-    					local meta = projmeta:getProjectileMeta()
+	    					local meta = projmeta.getProjectileMeta and projmeta:getProjectileMeta()
+	    					if not meta then
+	    						return fallback()
+	    					end
     					local lifetime = (worldmeta and meta.predictionLifetimeSec or meta.lifetimeSec or 3)
     					local gravity = (meta.gravitationalAcceleration or 196.2) * projmeta.gravityMultiplier
     					local projSpeed = (meta.launchVelocity or 100)
-    					local offsetpos = pos + (projmeta.projectile == 'owl_projectile' and Vector3.zero or projmeta.fromPositionOffset)
+	    					local offsetpos = pos + (projmeta.projectile == 'owl_projectile' and Vector3.zero or projmeta.fromPositionOffset or Vector3.zero)
     					local balloons = plr.Character:GetAttribute('InflatedBalloons')
     					local playerGravity = workspace.Gravity
     
@@ -5582,7 +5713,7 @@ run(function()
     						playerGravity = (workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975)))
     					end
     
-    					if plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
+	    					if plr.Character.PrimaryPart and plr.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
     						playerGravity = 6
     					end
     
@@ -5594,7 +5725,11 @@ run(function()
     						end
     					end
     
-    					local targetpos = getPosition(plr.Character) or plr[TargetPart.Value].Position
+					if (plr.RootPart.Position - entitylib.character.RootPart.Position).Magnitude > Distance.Value then
+						return fallback()
+					end
+					local selectedPart = plr[TargetPart.Value]
+					local targetpos = getPosition(plr.Character) or (selectedPart and selectedPart.Position) or plr.RootPart.Position
     					local newlook = CFrame.new(offsetpos, targetpos) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
     					-- Pass the target's RootPart so the prediction library can learn its per-target
     					-- motion (strafe/turn/jump/knockback) and apply latency compensation internally.
@@ -5678,6 +5813,16 @@ run(function()
     	Max = 1000,
     	Default = 1000,
     })
+	Distance = ProjectileAimbot:CreateSlider({
+		Name = 'Distance',
+		Min = 1,
+		Max = 1000,
+		Default = 1000,
+		Suffix = function(value)
+			return value == 1 and 'stud' or 'studs'
+		end,
+		Tooltip = 'Maximum target distance from your character.',
+	})
     Horizontal = ProjectileAimbot:CreateSlider({
     	Name = 'Horizontal prediction',
     	Min = 0,
@@ -5708,6 +5853,15 @@ run(function()
     		end
     	end,
     })
+	UseUmeko = ProjectileAimbot:CreateToggle({
+		Name = 'Use Umeko',
+		Tooltip = 'Aim ninja chakrams while Other Projectiles is disabled.',
+	})
+	Potions = ProjectileAimbot:CreateToggle({
+		Name = 'Shoot pots',
+		Default = true,
+		Tooltip = 'Aim splash potions separately from Other Projectiles.',
+	})
     Blacklist = ProjectileAimbot:CreateTextList({
     	Name = 'Blacklist',
     	Default = {'gloop', 'telepearl'},
