@@ -819,9 +819,13 @@ run(function()
 	}
 
 	task.spawn(function()
+		-- The old 10-second refresh made two external HTTP requests during every
+		-- match. When either request timed out it caused the exact short network
+		-- stalls seen in the client console. Load the whitelist once, then leave
+		-- match-time networking to Roblox's game remotes.
+		whitelist:update(whitelist.loaded)
 		repeat
-			if whitelist:update(whitelist.loaded) then return end
-			task.wait(10)
+			task.wait(3600)
 		until vape.Loaded == nil
 	end)
 
