@@ -42,3 +42,83 @@ local function downloadFile(path, func)
 		end
 		writefile(path, res)
 	end
+	return (func or readfile)(path)
+end
+
+local function finishLoading()
+	vape.Init = nil
+	vape:Load()
+	task.spawn(function()
+		repeat
+			vape:Save()
+			task.wait(20) -- OPTIMIZED: increased from 10 to 20 seconds to reduce save frequency
+		until not vape.Loaded
+	end)
+
+	local teleportedServers
+	vape:Clean(playersService.LocalPlayer.OnTeleport:Connect(function()
+		if (not teleportedServers) and (not shared.VapeIndependent) then
+			teleportedServers = true
+			local teleportScript = [[
+				shared.vapereload = true
+				if shared.VapeDeveloper then
+					loadstring(readfile('Coo/loader.lua'), 'loader')()
+				else
+					loadstring(game:HttpGet('https://raw.githubusercontent.com/chinse394-netizen/Coo/'..readfile('Coo/profiles/commit.txt')..'/loader.lua', true), 'loader')()
+				end
+			]]
+			if shared.VapeDeveloper then
+				teleportScript = 'shared.VapeDeveloper = true\n'..teleportScript
+			end
+			if shared.VapeCustomProfile then
+				teleportScript = 'shared.VapeCustomProfile = "'..shared.VapeCustomProfile..'"\n'..teleportScript
+			end
+			vape:Save()
+			queue_on_teleport(teleportScript)
+		end
+	end))
+
+	if not shared.vapereload then
+		if not vape.Categories then return end
+		if vape.Categories.Main.Options['GUI bind indicator'].Enabled then
+			vape:CreateNotification('Finished Loading', vape.VapeButton and 'Press the button in the top right to open GUI' or 'Press '..table.concat(vape.Keybind, ' + '):upper()..' to open GUI', 5)
+		end
+	end
+end
+
+if not isfile('Coo/profiles/gui.txt') then
+	writefile('Coo/profiles/gui.txt', 'new')
+end
+local gui = readfile('Coo/profiles/gui.txt')
+
+if not isfolder('Coo/assets/'..gui) then
+	makefolder('Coo/assets/'..gui)
+end
+vape = loadstring(downloadFile('Coo/guis/'..gui..'.lua'), 'gui')()
+shared.vape = vape
+
+if not shared.VapeIndependent then
+	loadstring(downloadFile('Coo/games/universal.lua'), 'universal')()
+	if isfile('Coo/games/'..game.PlaceId..'.lua') then
+		loadstring(readfile('Coo/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId))(...)
+	else
+		if not shared.VapeDeveloper then
+			local suc, res = pcall(function()
+				return game:HttpGet('https://raw.githubusercontent.com/chinse394-netizen/Coo/'..readfile('Coo/profiles/commit.txt')..'/games/'..game.PlaceId..'.lua', true)
+			end)
+			if suc and res ~= '404: Not Found' then
+				loadstring(downloadFile('Coo/games/'..game.PlaceId..'.lua'), tostring(game.PlaceId))(...)
+			end
+		end
+	end
+
+	-- Load game-specific category extensions before final GUI initialization.
+	pcall(function()
+		loadstring(downloadFile('Coo/libraries/kits.lua'), 'kits')()
+	end)
+
+	finishLoading()
+else
+	vape.Init = finishLoading
+	return vape
+end
