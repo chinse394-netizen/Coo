@@ -606,7 +606,7 @@ run(function()
 					entitylib.character = entity
 					entitylib.isAlive = true
 					entitylib.Events.LocalAdded:Fire(entity)
-					table.insert(entitylib.Connections, char.AttributeChanged:Connect(function(attr)
+					table.insert(entity.Connections, char.AttributeChanged:Connect(function(attr)
 						vapeEvents.AttributeChanged:Fire(attr)
 					end))
 				else
@@ -2974,7 +2974,7 @@ run(function()
 					set = true
 				else
 					HitBoxes:Clean(entitylib.Events.EntityAdded:Connect(createHitbox))
-					HitBoxes:Clean(entitylib.Events.EntityRemoving:Connect(function(ent)
+					HitBoxes:Clean(entitylib.Events.EntityRemoved:Connect(function(ent)
 						if objects[ent] then
 							objects[ent]:Destroy()
 							objects[ent] = nil
@@ -3241,6 +3241,7 @@ run(function()
 											selfPosition = {value = pos}
 										}
 									})
+									if vape.Libraries.diagnostics then vape.Libraries.diagnostics.count('SwordHit') end
 								end
 							end
 						end
@@ -12743,6 +12744,8 @@ run(function()
 	-- distance check is pure math (very cheap). Roblox properties are only
 	-- written when a part flips between near and far.
 	local distParts, distPos, distHidden, distCount, distIndex = {}, {}, {}, 0, 1
+	local distLastCompact = 0
+	local DIST_MAX_PARTS = 12000
 	local DIST_CHUNK = 2500
 	local effects, util = {}, {}
 	local oldAddNametag
@@ -12869,7 +12872,7 @@ run(function()
 			-- (No per-part CastShadow: GlobalShadows off already kills shadows, and
 			-- saving it for every block was the main cause of the FPS drops.)
 			if Reflections.Enabled then set(object, 'Reflectance', 0) end
-			if RenderDistance.Enabled and object.Anchored then
+			if RenderDistance.Enabled and object.Anchored and distCount < DIST_MAX_PARTS then
 				distCount += 1
 				distParts[distCount] = object
 				distPos[distCount] = object.Position
@@ -12972,6 +12975,28 @@ run(function()
 		distCount, distIndex = 0, 1
 	end
 
+	local function compactDistance(now)
+		if now - distLastCompact < 15 then return end
+		distLastCompact = now
+		local writeIndex = 0
+		for readIndex = 1, distCount do
+			local part = distParts[readIndex]
+			if part and part.Parent then
+				writeIndex += 1
+				distParts[writeIndex] = part
+				distPos[writeIndex] = part.Position
+				distHidden[writeIndex] = distHidden[readIndex]
+			end
+		end
+		for index = writeIndex + 1, distCount do
+			distParts[index] = nil
+			distPos[index] = nil
+			distHidden[index] = nil
+		end
+		distCount = writeIndex
+		if distIndex > distCount then distIndex = 1 end
+	end
+
 	local function getSaved(object, prop, fallback)
 		local propTable = saved[prop]
 		local value = propTable and propTable[object]
@@ -13005,6 +13030,8 @@ run(function()
 
 	local function updateDistance(now)
 		if not RenderDistance.Enabled or distCount == 0 then return end
+		compactDistance(now)
+		if distCount == 0 then return end
 		if now - lastDistanceCheck < DIST_INTERVAL then return end
 		lastDistanceCheck = now
 		local camera = workspace.CurrentCamera
@@ -24860,19 +24887,34 @@ run(function()
 		Tooltip = 'picks up items fast asl',
 		Function = function(callback)
 			if callback then
+				local pending = setmetatable({}, {__mode = 'k'})
+				local nextAttempt = setmetatable({}, {__mode = 'k'})
+				local maxRequestsPerScan = 4
 				FastPickup:Clean(task.spawn(function()
 					while FastPickup.Enabled do
 						if entitylib.isAlive then
+							local now = tick()
+							local sent = 0
 							for _, drop in pairs(workspace:WaitForChild('ItemDropsCache'):GetChildren()) do
+								if sent >= maxRequestsPerScan then break end
+								if not drop.Parent or pending[drop] or (nextAttempt[drop] or 0) > now then
+									continue
+								end
+								pending[drop] = true
+								nextAttempt[drop] = now + math.max(FastPickupDelay.Value, 0.25)
+								sent += 1
 								task.spawn(function()
-									task.wait(FastPickupDelay.Value)
+									if FastPickupDelay.Value > 0 then
+										task.wait(FastPickupDelay.Value)
+									end
 									pcall(function()
 										PickupRemote:InvokeServer({ itemDrop = drop })
 									end)
+									pending[drop] = nil
 								end)
 							end
 						end
-						task.wait(0.05)
+						task.wait(0.15)
 					end
 				end))
 			end
