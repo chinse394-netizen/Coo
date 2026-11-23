@@ -5723,13 +5723,20 @@ run(function()
 						return fallback()
     					end
     
-	    					local meta = projmeta.getProjectileMeta and projmeta:getProjectileMeta()
+	    					local meta
+	    					if type(projmeta.getProjectileMeta) == 'function' then
+	    						local success, result = pcall(projmeta.getProjectileMeta, projmeta)
+	    						if success then
+	    							meta = result
+	    						end
+	    					end
+	    					meta = meta or (bedwars.ProjectileMeta and bedwars.ProjectileMeta[projectileName])
 	    					if not meta then
 	    						return fallback()
 	    					end
     					local lifetime = (worldmeta and meta.predictionLifetimeSec or meta.lifetimeSec or 3)
 	    					local gravity = (meta.gravitationalAcceleration or 196.2) * (projmeta.gravityMultiplier or 1)
-    					local projSpeed = (meta.launchVelocity or 100)
+	    					local projSpeed = (meta.launchVelocity or 100) * (AutoCharge.Enabled and 1 or (projmeta.velocityMultiplier or 1))
 	    					local offsetpos = pos + (projmeta.projectile == 'owl_projectile' and Vector3.zero or projmeta.fromPositionOffset or Vector3.zero)
     					local balloons = plr.Character:GetAttribute('InflatedBalloons')
     					local playerGravity = workspace.Gravity
@@ -5755,12 +5762,9 @@ run(function()
 					end
 					local selectedPart = plr[TargetPart.Value]
 					local targetpos = getPosition(plr.Character) or (selectedPart and selectedPart.Position) or plr.RootPart.Position
-    					local newlook = CFrame.new(offsetpos, targetpos) * CFrame.new(projmeta.projectile == 'owl_projectile' and Vector3.zero or Vector3.new(bedwars.BowConstantsTable.RelX, bedwars.BowConstantsTable.RelY, bedwars.BowConstantsTable.RelZ))
-    					-- Pass the target's RootPart so the prediction library can learn its per-target
-    					-- motion (strafe/turn/jump/knockback) and apply latency compensation internally.
-    					-- targetpos stays the aim part; the library derives the aim/root offset itself.
 	    					local targetVelocity = projmeta.projectile == 'telepearl' and Vector3.zero or (plr.RootPart.AssemblyLinearVelocity or plr.RootPart.Velocity)
-    					local calc, predImpact, predTime = prediction.SolveTrajectory(newlook.p, projSpeed * Prediction.Value, gravity, targetpos, targetVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, nil, plr.RootPart)
+	    					targetVelocity *= Prediction.Value
+	    					local calc, predImpact, predTime = prediction.SolveTrajectory(offsetpos, projSpeed, gravity, targetpos, targetVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck)
     					-- Directional prediction: independently scale how far we lead the target
     					-- sideways (Horizontal, the X/Z plane) vs while it rises or falls (Vertical, Y).
     					-- 1 = the solver's own lead, <1 under-leads that axis, >1 over-leads it. We
@@ -5772,15 +5776,19 @@ run(function()
     							targetVelocity.Y * (Vertical.Value - 1),
     							targetVelocity.Z * (Horizontal.Value - 1)
     						) * predTime
-    						calc = prediction.SolveTrajectory(newlook.p, projSpeed * Prediction.Value, gravity, targetpos + lead, targetVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, nil, plr.RootPart) or calc
+	    						calc = prediction.SolveTrajectory(offsetpos, projSpeed, gravity, targetpos + lead, targetVelocity, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck) or calc
     					end
     					if calc then
+	    						local initialVelocity = calc - offsetpos
+	    						if initialVelocity.Magnitude < 0.001 then
+	    							return fallback()
+	    						end
     						if PADebug and PADebug.Enabled then
     							paDebugCapture(plr, offsetpos, targetpos, predImpact, predTime, projmeta)
     						end
     						targetinfo.Targets[plr] = tick() + 1
     						return {
-	    							initialVelocity = CFrame.new(newlook.Position, calc).LookVector * (projSpeed * (AutoCharge.Enabled and 1 or projmeta.velocityMultiplier or 1)),
+	    							initialVelocity = initialVelocity,
     							positionFrom = offsetpos,
     							deltaT = lifetime,
     							gravitationalAcceleration = gravity,
