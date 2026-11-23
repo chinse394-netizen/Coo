@@ -606,7 +606,7 @@ run(function()
 					entitylib.character = entity
 					entitylib.isAlive = true
 					entitylib.Events.LocalAdded:Fire(entity)
-					table.insert(entitylib.Connections, char.AttributeChanged:Connect(function(attr)
+					table.insert(entity.Connections, char.AttributeChanged:Connect(function(attr)
 						vapeEvents.AttributeChanged:Fire(attr)
 					end))
 				else
@@ -2974,7 +2974,7 @@ run(function()
 					set = true
 				else
 					HitBoxes:Clean(entitylib.Events.EntityAdded:Connect(createHitbox))
-					HitBoxes:Clean(entitylib.Events.EntityRemoving:Connect(function(ent)
+					HitBoxes:Clean(entitylib.Events.EntityRemoved:Connect(function(ent)
 						if objects[ent] then
 							objects[ent]:Destroy()
 							objects[ent] = nil
@@ -3241,6 +3241,7 @@ run(function()
 											selfPosition = {value = pos}
 										}
 									})
+									if vape.Libraries.diagnostics then vape.Libraries.diagnostics.count('SwordHit') end
 								end
 							end
 						end
