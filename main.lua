@@ -117,6 +117,11 @@ if not shared.VapeIndependent then
 		loadstring(downloadFile('Coo/libraries/kits.lua'), 'kits')()
 	end)
 
+	-- Optional runtime diagnostics (leak/load/sync monitor). Isolated so a missing file never blocks loading.
+	pcall(function()
+		loadstring(downloadFile('Coo/libraries/diagnostics.lua'), 'diagnostics')()
+	end)
+
 	finishLoading()
 else
 	vape.Init = finishLoading
