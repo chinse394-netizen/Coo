@@ -193,6 +193,38 @@ local function addCloseButton(parent, offset)
 	return close
 end
 
+-- Runs a module's toggle callback and remembers the thread that runs it while the module is
+-- enabled. Almost every module drives its main loop inline in Function(true) and only stops on
+-- `until not Module.Enabled`; a disable followed quickly by an enable (every setting change that
+-- calls Toggle(); Toggle(), profile loads, respawn hooks) flips Enabled back to true before the old
+-- loop wakes, leaving two or more loops alive. Cancelling the previous enable-threads on disable
+-- makes that impossible. Disable callbacks are never cancelled so cleanup always runs.
+local function spawnModuleFunction(moduleapi, func, enabled)
+	local threads = moduleapi.Threads
+	if not threads then
+		threads = setmetatable({}, {__mode = 'k'})
+		moduleapi.Threads = threads
+	end
+
+	if enabled then
+		return task.spawn(function()
+			local thread = coroutine.running()
+			threads[thread] = true
+			func(true)
+			threads[thread] = nil
+		end)
+	end
+
+	local current = coroutine.running()
+	for thread in threads do
+		threads[thread] = nil
+		if thread ~= current and coroutine.status(thread) ~= 'dead' then
+			pcall(task.cancel, thread)
+		end
+	end
+	return task.spawn(func, false)
+end
+
 local function addMaid(object)
 	object.Connections = {}
 	function object:Clean(callback)
@@ -3878,7 +3910,7 @@ function mainapi:CreateCategory(categorysettings)
 			if not multiple then
 				mainapi:UpdateTextGUI()
 			end
-			task.spawn(modulesettings.Function, self.Enabled)
+			spawnModuleFunction(self, modulesettings.Function, self.Enabled)
 		end
 
 		for i, v in components do
@@ -5148,7 +5180,7 @@ function mainapi:CreateLegit()
 				end
 				table.clear(moduleapi.Connections)
 			end
-			task.spawn(modulesettings.Function, moduleapi.Enabled)
+			spawnModuleFunction(moduleapi, modulesettings.Function, moduleapi.Enabled)
 		end
 
 		back.MouseEnter:Connect(function()
