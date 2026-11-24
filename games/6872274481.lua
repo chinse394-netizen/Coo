@@ -3057,8 +3057,8 @@ run(function()
 		local args = table.pack(...)
 		local offset = typeof(args[4]) == 'Vector3' and 0 or typeof(args[5]) == 'Vector3' and 1 or nil
 		if offset then
-			local shot = {
-				liveHandTool() or (store.hand and store.hand.tool), args[2 + offset], args[3 + offset],
+				local shot = {
+					store.hand and store.hand.tool, args[2 + offset], args[3 + offset],
 				args[4 + offset], nil, args[6 + offset], args[5 + offset], args[7 + offset]
 			}
 			local entry = projectileAim.Resolve(shot, 'local')
