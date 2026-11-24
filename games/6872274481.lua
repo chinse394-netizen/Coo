@@ -2942,7 +2942,6 @@ run(function()
 			Range = FOV.Value,
 			Players = Targets.Players.Enabled,
 			NPCs = (Targets.NPCs and Targets.NPCs.Enabled) or false,
-			Priority = Targets.Priority.Value,
 			Wallcheck = Targets.Walls.Enabled,
 			Sort = Sort.Value ~= 'Distance' and sortmethods[Sort.Value] or nil,
 			MouseOrigin = gameCamera.ViewportSize / 2,
@@ -3019,101 +3018,43 @@ run(function()
 		return CFrame.lookAt(origin, aimPosition).LookVector * speed
 	end
 
-	local projectileAim = {Shots = {}, Solvers = {}, Active = true}
-	vape.Libraries.projectileaim = projectileAim
-	projectileAim.Solvers.SilentAim = solveSilent
-
-	function projectileAim.Resolve(args, side)
-		local id = args[7]
-		if not projectileAim.Active or type(id) ~= 'string' or id == ''
-			or typeof(args[4]) ~= 'Vector3' or typeof(args[6]) ~= 'Vector3' or args[6].Magnitude <= 0 then return end
-		local now = os.clock()
-		for key, entry in projectileAim.Shots do
-			if now - entry.At > 2 then projectileAim.Shots[key] = nil end
-		end
-		local entry = projectileAim.Shots[id]
-		if entry and entry.Type == args[3] and entry.Side ~= side then
-			projectileAim.Shots[id] = nil
-			return entry
-		end
-		local pa = vape.Modules.ProjectileAimbot
-		local mode = SilentAim.Enabled and 'SilentAim' or pa and pa.Enabled and 'ProjectileAimbot'
-		local solver = mode and projectileAim.Solvers[mode]
-		local prepared = table.clone(args)
-		local ok, velocity
-		if solver then
-			ok, velocity = pcall(solver, prepared)
-		end
-		local aimed = ok and typeof(velocity) == 'Vector3' and velocity.Magnitude > 0
-		entry = {Type = args[3], Side = side, At = now, Velocity = aimed and velocity or nil, Data = aimed and prepared[8] or nil}
-		projectileAim.Shots[id] = entry
-		return entry
-	end
-
-	local function localProjectile(...)
-		if not projectileAim.Active or (checkcaller and checkcaller()) then
-			return projectileAim.Local(...)
-		end
-		local args = table.pack(...)
-		local offset = typeof(args[4]) == 'Vector3' and 0 or typeof(args[5]) == 'Vector3' and 1 or nil
-		if offset then
-				local shot = {
-					store.hand and store.hand.tool, args[2 + offset], args[3 + offset],
-				args[4 + offset], nil, args[6 + offset], args[5 + offset], args[7 + offset]
-			}
-			local entry = projectileAim.Resolve(shot, 'local')
-			if entry and entry.Velocity then
-				args[6 + offset] = entry.Velocity
-				if entry.Data then args[7 + offset] = entry.Data end
-			end
-		end
-		return projectileAim.Local(table.unpack(args, 1, args.n))
-	end
-
-	function projectileAim.Install()
-		local controller = bedwars.ProjectileController
-		if not projectileAim.Local and controller and type(controller.createLocalProjectile) == 'function' then
-			projectileAim.Local = controller.createLocalProjectile
-			controller.createLocalProjectile = localProjectile
-		end
-		if projectileAim.Namecall or not hookmetamethod then return end
-		local wrap = newcclosure or function(func) return func end
-		projectileAim.Namecall = hookmetamethod(game, '__namecall', wrap(function(...)
-			if not projectileAim.Active or (checkcaller and checkcaller()) or getnamecallmethod() ~= 'InvokeServer' then
-				return projectileAim.Namecall(...)
-			end
-			local remote = ...
-			if typeof(remote) ~= 'Instance' or remote.Name ~= 'ProjectileFire' then
-				return projectileAim.Namecall(...)
-			end
-			local args = table.pack(select(2, ...))
-			local entry = projectileAim.Resolve(args, 'packet')
-			if entry and entry.Velocity then
-				args[6] = entry.Velocity
-				if entry.Data then args[8] = entry.Data end
-			end
-				-- Calling the saved namecall closure here shifts the RemoteFunction
-				-- receiver into the projectile payload on some executors. Invoke the
-				-- original RemoteFunction directly so argument one remains the
-				-- projectile type string expected by BedWars.
-				return remote.InvokeServer(remote, table.unpack(args, 1, args.n))
-		end))
-	end
-
-	vape:Clean(function()
-		projectileAim.Active = false
-		table.clear(projectileAim.Shots)
-		local controller = bedwars.ProjectileController
-		if controller and controller.createLocalProjectile == localProjectile then
-			controller.createLocalProjectile = projectileAim.Local
-		end
-	end)
+	local oldNamecall
+	local projectileRemote
 
 	SilentAim = vape.Categories.Combat:CreateModule({
 		Name = 'SilentAim',
 		Function = function(callback)
 			if callback then
-				projectileAim.Install()
+				if oldNamecall or not hookmetamethod or not newcclosure then
+					if not oldNamecall then
+						notif('SilentAim', 'Your executor does not support native namecall hooks.', 5, 'warning')
+						SilentAim:Toggle()
+					end
+					return
+				end
+
+				local success, remote = pcall(function()
+					return bedwars.Client:Get(remotes.FireProjectile).instance
+				end)
+				if not success or not remote then
+					notif('SilentAim', 'Projectile remote is unavailable.', 5, 'warning')
+					SilentAim:Toggle()
+					return
+				end
+
+				projectileRemote = remote
+				local projectileRemoteName = remote.Name
+				oldNamecall = hookmetamethod(game, '__namecall', newcclosure(function(self, ...)
+					if SilentAim.Enabled and getnamecallmethod() == 'InvokeServer' and (self == projectileRemote or self.Name == projectileRemoteName) then
+						local arguments = table.pack(...)
+						local solved, redirectedVelocity = pcall(solveSilent, arguments)
+						if solved and typeof(redirectedVelocity) == 'Vector3' then
+							arguments[6] = redirectedVelocity
+						end
+						return oldNamecall(self, table.unpack(arguments, 1, arguments.n))
+					end
+					return oldNamecall(self, ...)
+				end))
 			end
 		end,
 		Tooltip = 'Redirects only the projectile values sent to the server, so enemies get hit while your shot flies exactly where you aimed on your own screen. Without native hooks (Solara, Xeno) the shot is turned at release instead and the trajectory preview is left untouched'
