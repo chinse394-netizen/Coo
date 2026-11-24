@@ -2809,140 +2809,376 @@ run(function()
 	local Targets
 	local TargetPart
 	local Sort
-	local Prediction
+	local PredictionScale
 	local FOV
 	local HitChance
+	local HeadshotChance
 	local OtherProjectiles
 	local Blacklist
-	local oldNamecall
-	local projectileRemote
-	local random = Random.new()
+	local MiloCheck
 
-	local function getSilentTargetPosition(entity)
-		if TargetPart.Value == 'Head' and entity.Head then
-			return entity.Head.Position
+	local RayCheck = RaycastParams.new()
+	RayCheck.FilterType = Enum.RaycastFilterType.Include
+
+	local RandomGenerator = Random.new()
+
+	local TargetLimbs = {
+		Torso = {'UpperTorso', 'LowerTorso'},
+		['Left arm'] = {'LeftUpperArm', 'LeftLowerArm', 'LeftHand'},
+		['Right arm'] = {'RightUpperArm', 'RightLowerArm', 'RightHand'},
+		['Left leg'] = {'LeftUpperLeg', 'LeftLowerLeg', 'LeftFoot'},
+		['Right leg'] = {'RightUpperLeg', 'RightLowerLeg', 'RightFoot'}
+	}
+	local LimbOrder = {'Head', 'Torso', 'Left arm', 'Right arm', 'Left leg', 'Right leg'}
+	local RandomLimb = setmetatable({}, {__mode = 'k'})
+
+	local function isHeadshotProjectile(itemType)
+		if not itemType then return false end
+		local lower = tostring(itemType):lower()
+		if lower:find('headhunter', 1, true) or lower:find('tactical', 1, true) then
+			return true
 		end
-		return entity.RootPart and entity.RootPart.Position
+		return store.equippedKit == 'archer'
+	end
+
+	local function isDisguised(ent)
+		if not ent.Player then return false end
+		local controller = bedwars.BlockDisguiseController
+		if controller and controller.getPlayerBlockModel then
+			return controller:getPlayerBlockModel(ent.Player) ~= nil
+		end
+		return workspace:FindFirstChild('DisguisedPlayerBlock_' .. ent.Player.UserId) ~= nil
+	end
+
+	local function getTargetPart(ent, mode)
+		if mode == 'Random' and ent.Character then
+			local pick = RandomLimb[ent.Character]
+			if not pick or tick() > pick.Clock then
+				pick = {Value = LimbOrder[math.random(1, #LimbOrder)], Clock = tick() + 1}
+				RandomLimb[ent.Character] = pick
+			end
+			mode = pick.Value
+		end
+
+		if mode == 'Head' then
+			return (ent.Character and ent.Character:FindFirstChild('Head')) or ent.Head or ent.RootPart
+		end
+
+		local limbs = TargetLimbs[mode]
+		if limbs and ent.Character then
+			for _, v in limbs do
+				local part = ent.Character:FindFirstChild(v)
+				if part then
+					return part
+				end
+			end
+		end
+
+		return ent.RootPart
+	end
+
+	local Motion = setmetatable({}, {__mode = 'k'})
+	local function getHitChance(ent, flight)
+		if not flight or flight ~= flight or flight <= 0 then
+			return 0
+		end
+
+		local root = ent.RootPart
+		local velocity = root.AssemblyLinearVelocity * Vector3.new(1, 0, 1)
+		local sample = Motion[root]
+		if not sample then
+			sample = {velocity = velocity, clock = os.clock(), accel = 0, speed = velocity.Magnitude}
+			Motion[root] = sample
+		end
+
+		local step = os.clock() - sample.clock
+		if step >= 0.05 then
+			local blend = math.min(step * 5, 1)
+			sample.accel += (((velocity - sample.velocity).Magnitude / step) - sample.accel) * blend
+			sample.speed += (velocity.Magnitude - sample.speed) * blend
+			sample.velocity, sample.clock = velocity, os.clock()
+		end
+
+		local drift = math.max(sample.speed, velocity.Magnitude) * math.min(flight, 0.4) * math.clamp(sample.accel / 120, 0, 1)
+		return 1 / (1 + ((drift / 3) ^ 2))
 	end
 
 	local function solveSilent(arguments)
-		local projectileType = arguments[3]
-		local origin = arguments[4]
-		local velocity = arguments[6]
-		if type(projectileType) ~= 'string' or typeof(origin) ~= 'Vector3' or typeof(velocity) ~= 'Vector3' then
+		local origin, velocity, projType = arguments[4], arguments[6], arguments[3]
+		if typeof(origin) ~= 'Vector3' or typeof(velocity) ~= 'Vector3' or type(projType) ~= 'string' then
 			return
 		end
 
-		if not OtherProjectiles.Enabled and not projectileType:find('arrow', 1, true) then
-			return
-		end
-		if table.find(Blacklist.ListEnabled or {}, (projectileType == 'glue_trap' or projectileType == 'glue_projectile') and 'gloop' or projectileType) then
-			return
-		end
-		if random:NextNumber(0, 100) > HitChance.Value then
+		if (not OtherProjectiles.Enabled) and not projType:find('arrow') then
 			return
 		end
 
-		local projectileMeta = bedwars.ProjectileMeta[projectileType]
+		if table.find(Blacklist.ListEnabled or {}, ((projType == 'glue_trap' or projType == 'glue_projectile') and 'gloop' or projType)) then
+			return
+		end
+
+		local meta = bedwars.ProjectileMeta[projType]
+		if not meta then
+			return
+		end
+
 		local speed = velocity.Magnitude
-		if not projectileMeta or speed <= 0 then
+		if speed <= 0 then
 			return
 		end
+
+		if RandomGenerator:NextNumber(0, 100) > HitChance:GetRandomValue() then
+			return
+		end
+
+		local map = workspace:FindFirstChild('Map')
+		if map ~= RayCheck.FilterDescendantsInstances[1] then
+			RayCheck.FilterDescendantsInstances = map and {map} or {}
+		end
+		local gravity = meta.gravitationalAcceleration or 196.2
 
 		local target = entitylib.EntityMouse({
 			Part = 'RootPart',
 			Range = FOV.Value,
 			Players = Targets.Players.Enabled,
-			NPCs = Targets.NPCs.Enabled,
+			NPCs = (Targets.NPCs and Targets.NPCs.Enabled) or false,
+			Priority = Targets.Priority.Value,
 			Wallcheck = Targets.Walls.Enabled,
-			Sort = sortmethods[Sort.Value or 'Distance'],
-			Origin = origin
+			Sort = Sort.Value ~= 'Distance' and sortmethods[Sort.Value] or nil,
+			MouseOrigin = gameCamera.ViewportSize / 2,
+			Origin = origin,
+			Check = function(candidate)
+				return not (MiloCheck.Enabled and isDisguised(candidate))
+			end
 		})
 		if not target then
 			return
 		end
 
-		local targetPosition = getSilentTargetPosition(target)
+		local partName = RandomGenerator:NextNumber(0, 100) < HeadshotChance:GetRandomValue() and 'Head' or TargetPart.Value
+		local selectedPart = getTargetPart(target, partName)
+		local targetPosition
+		if partName == 'Closest' then
+			local center, closestDistance = gameCamera.ViewportSize / 2, 9e9
+			for _, v in target.Character:GetChildren() do
+				if v:IsA('BasePart') then
+					local screenPosition, visible = gameCamera:WorldToViewportPoint(v.Position)
+					if visible then
+						local partDistance = (center - Vector2.new(screenPosition.X, screenPosition.Y)).Magnitude
+						if partDistance < closestDistance then
+							closestDistance, targetPosition = partDistance, v.Position
+						end
+					end
+				end
+			end
+			targetPosition = targetPosition or target.Character.PrimaryPart and target.Character.PrimaryPart.Position
+		elseif partName == 'Dynamic' then
+			local tool = store.hand.tool
+			if isHeadshotProjectile(tool and tool.Name) and target.Character:FindFirstChild('Head') then
+				targetPosition = target.Character.Head.Position
+			else
+				targetPosition = target.Character.PrimaryPart and target.Character.PrimaryPart.Position
+			end
+		end
+
+		targetPosition = targetPosition or selectedPart and selectedPart.Position
 		if not targetPosition then
 			return
 		end
-
 		local playerGravity = workspace.Gravity
-		local balloons = target.Character and target.Character:GetAttribute('InflatedBalloons')
+		local balloons = target.Character:GetAttribute('InflatedBalloons')
 		if balloons and balloons > 0 then
 			playerGravity = workspace.Gravity * (1 - (balloons >= 4 and 1.2 or balloons >= 3 and 1 or 0.975))
 		end
 
-		local targetVelocity = projectileType == 'telepearl' and Vector3.zero or (target.RootPart.AssemblyLinearVelocity or target.RootPart.Velocity)
-		local aimPosition = prediction.SolveTrajectory(
-			origin,
-			speed * Prediction.Value,
-			projectileMeta.gravitationalAcceleration or 196.2,
-			targetPosition,
-			targetVelocity,
-			playerGravity,
-			target.HipHeight,
-			target.Jumping and 42.6 or nil
-		)
-		if not aimPosition then
+		if target.Character.PrimaryPart and target.Character.PrimaryPart:FindFirstChild('rbxassetid://8200754399') then
+			playerGravity = 6
+		end
+
+		if target.Player and target.Player:GetAttribute('IsOwlTarget') then
+			for _, v in collectionService:GetTagged('Owl') do
+				if v:GetAttribute('Target') == target.Player.UserId and v:GetAttribute('Status') == 2 then
+					playerGravity = 0
+				end
+			end
+		end
+
+		local isPearl = projType == 'telepearl'
+		local targetVelocity = isPearl and Vector3.zero or target.RootPart.AssemblyLinearVelocity
+		local targetAirborne = (not isPearl and target.Humanoid and target.Humanoid.FloorMaterial == Enum.Material.Air) or math.abs(targetVelocity.Y) > 0.01
+		local aimPosition, _, travelTime = prediction.SolveTrajectory(origin, speed * PredictionScale.Value, gravity, targetPosition, targetVelocity, playerGravity, target.HipHeight, target.Jumping and 42.6 or nil, RayCheck, targetAirborne, target.RootPart.Position, target.RootPart, nil, true)
+		if not aimPosition or not travelTime or travelTime > (meta.lifetimeSec or 3) then
 			return
 		end
 
-		targetinfo.Targets[target] = tick() + 1
+		if targetinfo and targetinfo.Targets then
+			targetinfo.Targets[target] = tick() + 1
+		end
+		store.hitchance = store.hitchance or {}
+		store.hitchance.SilentAim = {Value = getHitChance(target, travelTime), Clock = tick()}
 		return CFrame.lookAt(origin, aimPosition).LookVector * speed
 	end
 
-	SilentAim = vape.Categories.Combat:CreateModule({
+	local projectileAim = {Shots = {}, Solvers = {}, Active = true}
+	vape.Libraries.projectileaim = projectileAim
+	projectileAim.Solvers.SilentAim = solveSilent
+
+	function projectileAim.Resolve(args, side)
+		local id = args[7]
+		if not projectileAim.Active or type(id) ~= 'string' or id == ''
+			or typeof(args[4]) ~= 'Vector3' or typeof(args[6]) ~= 'Vector3' or args[6].Magnitude <= 0 then return end
+		local now = os.clock()
+		for key, entry in projectileAim.Shots do
+			if now - entry.At > 2 then projectileAim.Shots[key] = nil end
+		end
+		local entry = projectileAim.Shots[id]
+		if entry and entry.Type == args[3] and entry.Side ~= side then
+			projectileAim.Shots[id] = nil
+			return entry
+		end
+		local pa = vape.Modules.ProjectileAimbot
+		local mode = SilentAim.Enabled and 'SilentAim' or pa and pa.Enabled and 'ProjectileAimbot'
+		local solver = mode and projectileAim.Solvers[mode]
+		local prepared = table.clone(args)
+		local ok, velocity
+		if solver then
+			ok, velocity = pcall(solver, prepared)
+		end
+		local aimed = ok and typeof(velocity) == 'Vector3' and velocity.Magnitude > 0
+		entry = {Type = args[3], Side = side, At = now, Velocity = aimed and velocity or nil, Data = aimed and prepared[8] or nil}
+		projectileAim.Shots[id] = entry
+		return entry
+	end
+
+	local function localProjectile(...)
+		if not projectileAim.Active or (checkcaller and checkcaller()) then
+			return projectileAim.Local(...)
+		end
+		local args = table.pack(...)
+		local offset = typeof(args[4]) == 'Vector3' and 0 or typeof(args[5]) == 'Vector3' and 1 or nil
+		if offset then
+			local shot = {
+				liveHandTool() or (store.hand and store.hand.tool), args[2 + offset], args[3 + offset],
+				args[4 + offset], nil, args[6 + offset], args[5 + offset], args[7 + offset]
+			}
+			local entry = projectileAim.Resolve(shot, 'local')
+			if entry and entry.Velocity then
+				args[6 + offset] = entry.Velocity
+				if entry.Data then args[7 + offset] = entry.Data end
+			end
+		end
+		return projectileAim.Local(table.unpack(args, 1, args.n))
+	end
+
+	function projectileAim.Install()
+		local controller = bedwars.ProjectileController
+		if not projectileAim.Local and controller and type(controller.createLocalProjectile) == 'function' then
+			projectileAim.Local = controller.createLocalProjectile
+			controller.createLocalProjectile = localProjectile
+		end
+		if projectileAim.Namecall or not hookmetamethod then return end
+		local wrap = newcclosure or function(func) return func end
+		projectileAim.Namecall = hookmetamethod(game, '__namecall', wrap(function(...)
+			if not projectileAim.Active or (checkcaller and checkcaller()) or getnamecallmethod() ~= 'InvokeServer' then
+				return projectileAim.Namecall(...)
+			end
+			local remote = ...
+			if typeof(remote) ~= 'Instance' or remote.Name ~= 'ProjectileFire' then
+				return projectileAim.Namecall(...)
+			end
+			local args = table.pack(select(2, ...))
+			local entry = projectileAim.Resolve(args, 'packet')
+			if entry and entry.Velocity then
+				args[6] = entry.Velocity
+				if entry.Data then args[8] = entry.Data end
+			end
+			return projectileAim.Namecall(remote, table.unpack(args, 1, args.n))
+		end))
+	end
+
+	vape:Clean(function()
+		projectileAim.Active = false
+		table.clear(projectileAim.Shots)
+		local controller = bedwars.ProjectileController
+		if controller and controller.createLocalProjectile == localProjectile then
+			controller.createLocalProjectile = projectileAim.Local
+		end
+	end)
+
+	SilentAim = vape.Categories.Blatant:CreateModule({
 		Name = 'SilentAim',
 		Function = function(callback)
 			if callback then
-				if oldNamecall or not hookmetamethod or not newcclosure then
-					if not oldNamecall then
-						notif('SilentAim', 'Your executor does not support native namecall hooks.', 5, 'warning')
-						SilentAim:Toggle()
-					end
-					return
-				end
-				local ok, remote = pcall(function()
-					return bedwars.Client:Get(remotes.FireProjectile).instance
-				end)
-				if not ok or not remote then
-					notif('SilentAim', 'Projectile remote is unavailable.', 5, 'warning')
-					SilentAim:Toggle()
-					return
-				end
-				projectileRemote = remote
-				local projectileRemoteName = remote.Name
-
-				oldNamecall = hookmetamethod(game, '__namecall', newcclosure(function(self, ...)
-					if SilentAim.Enabled and getnamecallmethod() == 'InvokeServer' and (self == projectileRemote or self.Name == projectileRemoteName) then
-						local arguments = table.pack(...)
-						local ok, redirectedVelocity = pcall(solveSilent, arguments)
-						if ok and typeof(redirectedVelocity) == 'Vector3' then
-							arguments[6] = redirectedVelocity
-						end
-						return oldNamecall(self, table.unpack(arguments, 1, arguments.n))
-					end
-					return oldNamecall(self, ...)
-				end))
+				projectileAim.Install()
 			end
 		end,
-		Tooltip = 'Redirects supported projectile server shots toward the selected target.'
+		Tooltip = 'Redirects only the projectile values sent to the server, so enemies get hit while your shot flies exactly where you aimed on your own screen. Without native hooks (Solara, Xeno) the shot is turned at release instead and the trajectory preview is left untouched'
 	})
-	Targets = SilentAim:CreateTargets({Players = true, Walls = true})
-	TargetPart = SilentAim:CreateDropdown({Name = 'Part', List = {'RootPart', 'Head'}})
-	local methods = {'Damage', 'Distance'}
-	for name in sortmethods do
-		if not table.find(methods, name) then table.insert(methods, name) end
-	end
-	Sort = SilentAim:CreateDropdown({Name = 'Target Mode', List = methods, Default = 'Distance'})
-	Prediction = SilentAim:CreateSlider({Name = 'Prediction', Min = 0.1, Max = 2, Default = 1, Decimal = 10})
-	FOV = SilentAim:CreateSlider({Name = 'FOV', Min = 1, Max = 1000, Default = 1000})
-	HitChance = SilentAim:CreateSlider({Name = 'Hit Chance', Min = 0, Max = 100, Default = 100, Suffix = '%'})
-	OtherProjectiles = SilentAim:CreateToggle({Name = 'Other Projectiles', Default = true})
-	Blacklist = SilentAim:CreateTextList({Name = 'Blacklist', Default = {'gloop', 'telepearl'}, Darker = true, Placeholder = 'projectile'})
-end)
 
+	Targets = SilentAim:CreateTargets({
+		Players = true,
+		Walls = true
+	})
+	TargetPart = SilentAim:CreateDropdown({
+		Name = 'Part',
+		List = {'RootPart', 'Head', 'Torso', 'Left arm', 'Right arm', 'Left leg', 'Right leg', 'Random', 'Dynamic', 'Closest'}
+	})
+	Sort = SilentAim:CreateDropdown({
+		Name = 'Target Mode',
+		List = {'Damage', 'Distance', 'Angle', 'Health', 'Kit', 'Mouse', 'Threat'},
+		Default = 'Distance'
+	})
+	Sort:SetValue('Distance')
+	PredictionScale = SilentAim:CreateSlider({
+		Name = 'Prediction',
+		Min = 0.1,
+		Max = 2,
+		Default = 1,
+		Decimal = 10
+	})
+	FOV = SilentAim:CreateSlider({
+		Name = 'FOV',
+		Min = 1,
+		Max = 1000,
+		Default = 1000
+	})
+	HitChance = SilentAim:CreateTwoSlider({
+		Name = 'Hit Chance',
+		Min = 0,
+		Max = 100,
+		DefaultMin = 100,
+		DefaultMax = 100,
+		Tooltip = 'Chance in % for each shot to be redirected, rolled fresh between the two values on every shot. A missed roll leaves the shot where you aimed'
+	})
+	HeadshotChance = SilentAim:CreateTwoSlider({
+		Name = 'Headshot Chance',
+		Min = 0,
+		Max = 100,
+		DefaultMin = 0,
+		DefaultMax = 0,
+		Tooltip = 'Chance in % for each redirected shot to aim at the head instead of the Part setting, rolled fresh between the two values on every shot'
+	})
+	OtherProjectiles = SilentAim:CreateToggle({
+		Name = 'Other Projectiles',
+		Function = function(callback)
+			if Blacklist then
+				Blacklist.Object.Visible = callback
+			end
+		end,
+		Default = true
+	})
+	Blacklist = SilentAim:CreateTextList({
+		Name = 'Blacklist',
+		Default = {'gloop', 'telepearl'},
+		Darker = true,
+		Placeholder = 'projectile'
+	})
+	MiloCheck = SilentAim:CreateToggle({
+		Name = 'Milo check',
+		Default = true,
+		Tooltip = 'Skips Milo players while they are disguised as a block'
+	})
+end)
 run(function()
 	local Mode
 	local Expand
