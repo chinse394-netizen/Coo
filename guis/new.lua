@@ -193,6 +193,38 @@ local function addCloseButton(parent, offset)
 	return close
 end
 
+-- Runs a module's toggle callback and remembers the thread that runs it while the module is
+-- enabled. Almost every module drives its main loop inline in Function(true) and only stops on
+-- `until not Module.Enabled`; a disable followed quickly by an enable (every setting change that
+-- calls Toggle(); Toggle(), profile loads, respawn hooks) flips Enabled back to true before the old
+-- loop wakes, leaving two or more loops alive. Cancelling the previous enable-threads on disable
+-- makes that impossible. Disable callbacks are never cancelled so cleanup always runs.
+local function spawnModuleFunction(moduleapi, func, enabled)
+	local threads = moduleapi.Threads
+	if not threads then
+		threads = setmetatable({}, {__mode = 'k'})
+		moduleapi.Threads = threads
+	end
+
+	if enabled then
+		return task.spawn(function()
+			local thread = coroutine.running()
+			threads[thread] = true
+			func(true)
+			threads[thread] = nil
+		end)
+	end
+
+	local current = coroutine.running()
+	for thread in threads do
+		threads[thread] = nil
+		if thread ~= current and coroutine.status(thread) ~= 'dead' then
+			pcall(task.cancel, thread)
+		end
+	end
+	return task.spawn(func, false)
+end
+
 local function addMaid(object)
 	object.Connections = {}
 	function object:Clean(callback)
@@ -1256,7 +1288,11 @@ components = {
 		end
 		
 		function optionapi:Load(tab)
-			local newval = tab.Value == tab.Max and tab.Max ~= self.Max and self.Max or tab.Value
+			if type(tab) ~= 'table' then return end
+			local savedValue = tonumber(tab.Value)
+			if savedValue == nil then return end
+			local savedMax = tonumber(tab.Max)
+			local newval = savedValue == savedMax and savedMax ~= self.Max and self.Max or savedValue
 			if self.Value ~= newval then
 				self:SetValue(newval, nil, true)
 			end
@@ -1268,7 +1304,9 @@ components = {
 		end
 		
 		function optionapi:SetValue(value, pos, final)
-			if tonumber(value) == math.huge or value ~= value then return end
+			value = tonumber(value)
+			if not value or value == math.huge or value ~= value then return end
+			value = math.clamp(value, optionsettings.Min, optionsettings.Max)
 			local check = self.Value ~= value
 			self.Value = value
 			tween:Tween(fill, uipallet.Tween, {
@@ -2297,11 +2335,30 @@ components = {
 		end
 		
 		function optionapi:Load(tab)
-			if self.ValueMin ~= tab.ValueMin then
-				self:SetValue(false, tab.ValueMin)
+			if type(tab) ~= 'table' then return end
+
+			-- Older profiles stored a normal slider as {Value = number}.
+			-- Treat that value as both ends of the new range slider.
+			local minimum = tonumber(tab.ValueMin)
+			local maximum = tonumber(tab.ValueMax)
+			local legacyValue = tonumber(tab.Value)
+			if minimum == nil then
+				minimum = legacyValue or self.ValueMin
 			end
-			if self.ValueMax ~= tab.ValueMax then
-				self:SetValue(true, tab.ValueMax)
+			if maximum == nil then
+				maximum = legacyValue or self.ValueMax
+			end
+
+			minimum = math.clamp(minimum, optionsettings.Min, optionsettings.Max)
+			maximum = math.clamp(maximum, optionsettings.Min, optionsettings.Max)
+			if minimum > maximum then
+				minimum, maximum = maximum, minimum
+			end
+			if self.ValueMin ~= minimum then
+				self:SetValue(false, minimum)
+			end
+			if self.ValueMax ~= maximum then
+				self:SetValue(true, maximum)
 			end
 		end
 		
@@ -2316,7 +2373,9 @@ components = {
 		end
 		
 		function optionapi:SetValue(max, value)
-			if tonumber(value) == math.huge or value ~= value then return end
+			value = tonumber(value)
+			if not value or value == math.huge or value ~= value then return end
+			value = math.clamp(value, optionsettings.Min, optionsettings.Max)
 			self[max and 'ValueMax' or 'ValueMin'] = value
 			valuebutton.Text = self.ValueMax
 			valuebutton2.Text = self.ValueMin
@@ -3878,7 +3937,7 @@ function mainapi:CreateCategory(categorysettings)
 			if not multiple then
 				mainapi:UpdateTextGUI()
 			end
-			task.spawn(modulesettings.Function, self.Enabled)
+			spawnModuleFunction(self, modulesettings.Function, self.Enabled)
 		end
 
 		for i, v in components do
@@ -5148,7 +5207,7 @@ function mainapi:CreateLegit()
 				end
 				table.clear(moduleapi.Connections)
 			end
-			task.spawn(modulesettings.Function, moduleapi.Enabled)
+			spawnModuleFunction(moduleapi, modulesettings.Function, moduleapi.Enabled)
 		end
 
 		back.MouseEnter:Connect(function()
