@@ -24619,7 +24619,7 @@ run(function()
 	local UpdateRate
 	local AttackRate
 	local HitMargin
-	local FireCount
+	local EventsPerHit
 	local UncapFPS
 	local oldFpsCap
 	local AngleSlider
@@ -24870,9 +24870,11 @@ run(function()
 									local holdingSword = handItem and handItem.Value == sword.tool
 									local targetAlive = v.Character and v.Character.Parent and entitylib.isVulnerable(v)
 									if AttackRemote and actualRoot and holdingSword and targetAlive and now >= nextAttack and not isFuryPotionInUse() then
-										-- Minimum delay between attack requests.
-										local weaponInterval = 0.05
-										local attackInterval = math.max(weaponInterval + (HitMargin.Value / 1000), 0.03)
+										-- One hit = one server sword cooldown (same window the other aura
+										-- modules use). Spread EventsPerHit attack events evenly across it,
+										-- so each hit sends exactly that many SwordHit events.
+										local hitWindow = math.max(tonumber(meta.sword.attackSpeed) or 0, 10 / 34)
+										local attackInterval = math.max(hitWindow / EventsPerHit.Value + (HitMargin.Value / 1000), 0.03)
 										nextAttack = now + attackInterval + 0.002
 										if not Swing.Enabled and not LegitAura.Enabled then
 											bedwars.SwordController:playSwordEffect(meta, false)
@@ -24890,7 +24892,7 @@ run(function()
 											-- Keep the local sword controller's attack timestamp in sync
 											-- with the remote request for faster client hit registration.
 											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-											local payload = {
+											AttackRemote:FireServer({
 												weapon = sword.tool,
 												chargedAttack = {chargeRatio = 0},
 												entityInstance = v.Character,
@@ -24902,11 +24904,7 @@ run(function()
 													targetPosition = {value = currentPosition},
 													selfPosition = {value = selfpos}
 												}
-											}
-											-- Send the attack remote FireCount times for each hit.
-											for _ = 1, FireCount.Value do
-												AttackRemote:FireServer(payload)
-											end
+											})
 										end)
 										if sent then
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
@@ -25057,12 +25055,12 @@ run(function()
 		Suffix = 'ms',
 		Tooltip = 'ms added to each hit.\nNegative = faster, more rejected hits.\nPositive = slower, safer.'
 	})
-	FireCount = Killaura:CreateSlider({
-		Name = 'Fires per hit',
+	EventsPerHit = Killaura:CreateSlider({
+		Name = 'SwordHit events per hit',
 		Min = 1,
-		Max = 3,
+		Max = 6,
 		Default = 2,
-		Tooltip = 'How many times the attack remote is\nsent for each hit.'
+		Tooltip = 'SwordHit events sent for each hit\n(one sword cooldown, about 0.3s).'
 	})
 	UncapFPS = Killaura:CreateToggle({
 		Name = 'Uncap FPS',
