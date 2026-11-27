@@ -1306,7 +1306,13 @@ components = {
 		function optionapi:SetValue(value, pos, final)
 			value = tonumber(value)
 			if not value or value == math.huge or value ~= value then return end
-			value = math.clamp(value, optionsettings.Min, optionsettings.Max)
+			-- Dragging (pos given) stays inside Min..Max. Typed or loaded values
+			-- (no pos) may go above Max so the limit can be raised by hand.
+			if pos then
+				value = math.clamp(value, optionsettings.Min, optionsettings.Max)
+			else
+				value = math.max(value, optionsettings.Min)
+			end
 			local check = self.Value ~= value
 			self.Value = value
 			tween:Tween(fill, uipallet.Tween, {
@@ -2349,8 +2355,8 @@ components = {
 				maximum = legacyValue or self.ValueMax
 			end
 
-			minimum = math.clamp(minimum, optionsettings.Min, optionsettings.Max)
-			maximum = math.clamp(maximum, optionsettings.Min, optionsettings.Max)
+			minimum = math.max(minimum, optionsettings.Min)
+			maximum = math.max(maximum, optionsettings.Min)
 			if minimum > maximum then
 				minimum, maximum = maximum, minimum
 			end
@@ -2372,10 +2378,16 @@ components = {
 			return random:NextNumber(optionapi.ValueMin, optionapi.ValueMax)
 		end
 		
-		function optionapi:SetValue(max, value)
+		function optionapi:SetValue(max, value, pos)
 			value = tonumber(value)
 			if not value or value == math.huge or value ~= value then return end
-			value = math.clamp(value, optionsettings.Min, optionsettings.Max)
+			-- Dragging (pos given) stays inside Min..Max. Typed or loaded values
+			-- (no pos) may go above Max so the limit can be raised by hand.
+			if pos then
+				value = math.clamp(value, optionsettings.Min, optionsettings.Max)
+			else
+				value = math.max(value, optionsettings.Min)
+			end
 			self[max and 'ValueMax' or 'ValueMin'] = value
 			valuebutton.Text = self.ValueMax
 			valuebutton2.Text = self.ValueMin
