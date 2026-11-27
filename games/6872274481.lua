@@ -24619,6 +24619,7 @@ run(function()
 	local UpdateRate
 	local AttackRate
 	local HitMargin
+	local FireCount
 	local UncapFPS
 	local oldFpsCap
 	local AngleSlider
@@ -24777,15 +24778,15 @@ run(function()
 									anims.Random = {{CFrame = CFrame.Angles(math.rad(math.random(1, 360)), math.rad(math.random(1, 360)), math.rad(math.random(1, 360))), Time = 0.12}}
 								end
 
-							local animationSpeed = math.max(AnimationSpeed.Value, 0.05)
-							for _, v in anims[AnimationMode.Value] or {} do
-								local tweenTime = first and (AnimationTween.Enabled and 0.001 or 0.1) or v.Time / animationSpeed
-								AnimTween = tweenService:Create(wrist, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {
-									C0 = armC0 * v.CFrame
-								})
-								AnimTween:Play()
-								-- Wait by time so a destroyed viewmodel cannot hang this thread.
-								task.wait(tweenTime)
+								local animationSpeed = math.max(AnimationSpeed.Value, 0.05)
+								for _, v in anims[AnimationMode.Value] or {} do
+									local tweenTime = first and (AnimationTween.Enabled and 0.001 or 0.1) or v.Time / animationSpeed
+									AnimTween = tweenService:Create(wrist, TweenInfo.new(tweenTime, Enum.EasingStyle.Linear), {
+										C0 = armC0 * v.CFrame
+									})
+									AnimTween:Play()
+									-- Wait by time so a destroyed viewmodel cannot hang this thread.
+									task.wait(tweenTime)
 									first = false
 									if (not Killaura.Enabled) or (not Attacking) or runId ~= myRun or not wrist.Parent then break end
 								end
@@ -24889,7 +24890,7 @@ run(function()
 											-- Keep the local sword controller's attack timestamp in sync
 											-- with the remote request for faster client hit registration.
 											bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-											AttackRemote:FireServer({
+											local payload = {
 												weapon = sword.tool,
 												chargedAttack = {chargeRatio = 0},
 												entityInstance = v.Character,
@@ -24901,7 +24902,11 @@ run(function()
 													targetPosition = {value = currentPosition},
 													selfPosition = {value = selfpos}
 												}
-											})
+											}
+											-- Send the attack remote FireCount times for each hit.
+											for _ = 1, FireCount.Value do
+												AttackRemote:FireServer(payload)
+											end
 										end)
 										if sent then
 											store.attackReach = (delta.Magnitude * 100) // 1 / 100
@@ -25051,6 +25056,13 @@ run(function()
 		Default = 0,
 		Suffix = 'ms',
 		Tooltip = 'ms added to each hit.\nNegative = faster, more rejected hits.\nPositive = slower, safer.'
+	})
+	FireCount = Killaura:CreateSlider({
+		Name = 'Fires per hit',
+		Min = 1,
+		Max = 3,
+		Default = 2,
+		Tooltip = 'How many times the attack remote is\nsent for each hit.'
 	})
 	UncapFPS = Killaura:CreateToggle({
 		Name = 'Uncap FPS',
@@ -25258,7 +25270,7 @@ run(function()
 			Killaura:Toggle()
 		end
 	end)
-end)  
+end)
 
 run(function()
 	local FastPickup
