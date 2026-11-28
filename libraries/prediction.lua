@@ -186,7 +186,7 @@ function module.solveQuartic(c0, c1, c2, c3, c4)
 	return {s3, s2, s1, s0}
 end
 
-function module.SolveTrajectory(origin, projectileSpeed, gravity, targetPos, targetVelocity, playerGravity, playerHeight, playerJump, params)
+function module.SolveTrajectory(origin, projectileSpeed, gravity, targetPos, targetVelocity, playerGravity, playerHeight, playerJump, params, _airFlag, _rootPos, _root, _lifeOverride, _strict, rootIndex)
 	if type(projectileSpeed) ~= 'number' or projectileSpeed <= eps then
 		return
 	end
@@ -232,8 +232,9 @@ function module.SolveTrajectory(origin, projectileSpeed, gravity, targetPos, tar
 			end
 		end
 		table.sort(posRoots)
-		if posRoots[1] then
-			local t = posRoots[1]
+		-- rootIndex 2 picks the longer, higher arc. Default stays the shortest one.
+		local t = posRoots[rootIndex or 1]
+		if t then
 			local d = (h + p*t)/t
 			local e = (j + q*t - l*t*t)/t
 			local f = (k + r*t)/t
