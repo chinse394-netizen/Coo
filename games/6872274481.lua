@@ -3180,8 +3180,8 @@ run(function()
 			pingLead = math.clamp(ping * (PingComp.Value / 100), 0, 0.35)
 		end
 		local leadOffset = Vector3.new(velUsed.X, 0, velUsed.Z) * pingLead
-		local function aimAt(point)
-			local c1, i1, f1 = prediction.SolveTrajectory(spawnPos, projSpeed, gravity, point + leadOffset, velUsed, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, airFlag, plr.RootPart.Position + leadOffset, plr.RootPart, nil, true)
+		local function aimAt(point, arc)
+			local c1, i1, f1 = prediction.SolveTrajectory(spawnPos, projSpeed, gravity, point + leadOffset, velUsed, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, airFlag, plr.RootPart.Position + leadOffset, plr.RootPart, nil, true, arc)
 			if not c1 then return nil end
 			return c1, f1, spawnPos, i1
 		end
@@ -3220,21 +3220,26 @@ run(function()
 		local checks, solves = 0, 0
 		local fallbackCalc, fallbackTime, fallbackImpact
 		local function tryPoint(point)
-			if checks >= 220 or solves >= 48 then return false end
-			checks += 1
-			solves += 1
-			local c, f, shotStart, i = aimAt(point)
-			if not c or not f or f <= 0 or f > lifetime then return false end
-			local delta = c - spawnPos
-			if delta.Magnitude <= 0.01 then return false end
-			if not prediction.IsTrajectoryClear(shotStart, delta.Unit * projSpeed, gravity, f, rayCheck) then
-				if not fallbackCalc then
-					fallbackCalc, fallbackTime, fallbackImpact = c, f, i
+			-- Arc 1 is the flat shot. Arc 2 is the high lob that comes down over a block edge.
+			for arc = 1, 2 do
+				if checks >= 220 or solves >= 48 then return false end
+				checks += 1
+				solves += 1
+				local c, f, shotStart, i = aimAt(point, arc)
+				if c and f and f > 0 and f <= lifetime then
+					local delta = c - spawnPos
+					if delta.Magnitude > 0.01 then
+						if prediction.IsTrajectoryClear(shotStart, delta.Unit * projSpeed, gravity, f, rayCheck) then
+							calc, flightTime, impact = c, f, i
+							return true
+						end
+						if not fallbackCalc then
+							fallbackCalc, fallbackTime, fallbackImpact = c, f, i
+						end
+					end
 				end
-				return false
 			end
-			calc, flightTime, impact = c, f, i
-			return true
+			return false
 		end
 		for _, part in parts do
 			if tryPoint(part.Position) then break end
