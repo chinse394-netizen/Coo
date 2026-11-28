@@ -563,15 +563,16 @@ end
 -- Feeds target motion to the prediction library. Your prediction library has no
 -- Observe, so this stays idle until one exists (it returns early each frame).
 local function watchTargets()
+	local aim = vape.Libraries.aimlib or prediction
 	return runService.Heartbeat:Connect(function()
-		if not entitylib.isAlive or not prediction.Observe then return end
+		if not entitylib.isAlive or not aim.Observe then return end
 		local here = entitylib.character.RootPart.Position
 		for _, ent in entitylib.List do
 			local root = ent.RootPart
 			if root and root.Parent and (root.Position - here).Magnitude < 250 then
 				local vel = root.AssemblyLinearVelocity
 				local air = (ent.Humanoid and ent.Humanoid.FloorMaterial == Enum.Material.Air) or math.abs(vel.Y) > 2
-				pcall(prediction.Observe, root, root.Position, vel, air, workspace.Gravity, here, ent.HipHeight, ent.Jumping and 42.6 or nil)
+				pcall(aim.Observe, root, root.Position, vel, air, workspace.Gravity, here, ent.HipHeight, ent.Jumping and 42.6 or nil)
 			end
 		end
 	end)
@@ -2944,6 +2945,9 @@ run(function()
 	-- When false the aim uses the speed of the shot the game sent (your real draw).
 	-- When true it assumes a fully charged arrow, which the server only gives if the draw time is sent too.
 	local AUTOCHARGE_CHANGES_SPEED = false
+	-- SilentAim uses the aerov4 aim library when it loaded. It tracks target movement and lag.
+	local usingAimlib = vape.Libraries.aimlib ~= nil
+	local prediction = vape.Libraries.aimlib or prediction
 	local projectileRemoteName = 'ProjectileFire'
 
 	local rayCheck = RaycastParams.new()
@@ -3224,7 +3228,7 @@ run(function()
 		local fallbackCalc, fallbackTime, fallbackImpact
 		local function tryPoint(point)
 			-- Arc 1 is the flat shot. Arc 2 is the high lob that comes down over a block edge.
-			for arc = 1, 2 do
+			for arc = 1, usingAimlib and 1 or 2 do
 				if checks >= 220 or solves >= 48 then return false end
 				checks += 1
 				solves += 1
