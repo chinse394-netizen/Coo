@@ -2941,6 +2941,9 @@ run(function()
 	local updateRandomizeVisibility
 	local PingComp
 	local PredictionScale
+	-- When false the aim uses the speed of the shot the game sent (your real draw).
+	-- When true it assumes a fully charged arrow, which the server only gives if the draw time is sent too.
+	local AUTOCHARGE_CHANGES_SPEED = false
 	local projectileRemoteName = 'ProjectileFire'
 
 	local rayCheck = RaycastParams.new()
@@ -3099,7 +3102,7 @@ run(function()
 		local projSpeed = velocity.Magnitude
 		if projSpeed <= 0 then return end
 
-		if AutoCharge and AutoCharge.Enabled then
+		if AUTOCHARGE_CHANGES_SPEED and AutoCharge and AutoCharge.Enabled then
 			local sourceTool = args[1]
 			local itemMeta = sourceTool and bedwars.ItemMeta[sourceTool.Name]
 			local sourceMeta = itemMeta and itemMeta.projectileSource
