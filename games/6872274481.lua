@@ -3319,7 +3319,9 @@ run(function()
 									local chargeRatio = math.clamp(skidChargePercent.Value / 100, 0, 1)
 									maxCharge = maxCharge or (tostring(args[3]):find('arrow', 1, true) and 0.65 or 0.8)
 									-- Full charge sends 5 like the built-in Projectile Aimbot does.
-									args[8].drawDurationSeconds = chargeRatio >= 0.999 and math.max(maxCharge, 5) or maxCharge * chargeRatio
+									local shotInfo = table.clone(args[8])
+									shotInfo.drawDurationSeconds = chargeRatio >= 0.999 and math.max(maxCharge, 5) or maxCharge * chargeRatio
+									args[8] = shotInfo
 								end
 							end
 							local self = ...
