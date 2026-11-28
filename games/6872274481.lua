@@ -2940,6 +2940,7 @@ run(function()
 	local skidChargePercent
 	local updateRandomizeVisibility
 	local PingComp
+	local PredictionScale
 	local projectileRemoteName = 'ProjectileFire'
 
 	local rayCheck = RaycastParams.new()
@@ -3161,12 +3162,14 @@ run(function()
 		end
 		local _map = workspace:FindFirstChild('Map')
 		if _map then rayCheck.FilterDescendantsInstances = {_map} end
-		local lifetime = tonumber(meta.predictionLifetimeSec) or tonumber(meta.lifetimeSec) or (projSpeed > 0 and math.min(3, 120 / projSpeed) or 3)
+		-- The server's projectile lifetime decides whether a long shot can still land. The
+		-- shorter client-side prediction lifetime (and a flat 120-stud cap) rejected far shots.
+		local lifetime = tonumber(meta.lifetimeSec) or tonumber(meta.predictionLifetimeSec) or 3
 		-- args[4] is already the spawn position the server simulates from (the bow offset is
 		-- applied before the remote is called), so aim straight from it.
 		local spawnPos = origin
 		local airFlag = (plr.Humanoid and plr.Humanoid.FloorMaterial == Enum.Material.Air) or math.abs(rawVel.Y) > 0.01
-		local velUsed = _saVelHistory[_velKey] or rawVel
+		local velUsed = (_saVelHistory[_velKey] or rawVel) * (PredictionScale.Value / 100)
 		-- What we see of the target is already behind where the server has it, and the shot
 		-- also takes time to reach the server. Lead the target sideways by that amount.
 		local pingLead = 0
@@ -3215,16 +3218,19 @@ run(function()
 		end
 		local calc, flightTime, impact
 		local checks, solves = 0, 0
+		local fallbackCalc, fallbackTime, fallbackImpact
 		local function tryPoint(point)
 			if checks >= 220 or solves >= 48 then return false end
 			checks += 1
-			if workspace:Raycast(spawnPos, point - spawnPos, rayCheck) then return false end
 			solves += 1
 			local c, f, shotStart, i = aimAt(point)
 			if not c or not f or f <= 0 or f > lifetime then return false end
 			local delta = c - spawnPos
 			if delta.Magnitude <= 0.01 then return false end
 			if not prediction.IsTrajectoryClear(shotStart, delta.Unit * projSpeed, gravity, f, rayCheck) then
+				if not fallbackCalc then
+					fallbackCalc, fallbackTime, fallbackImpact = c, f, i
+				end
 				return false
 			end
 			calc, flightTime, impact = c, f, i
@@ -3258,6 +3264,10 @@ run(function()
 					end
 				end
 			end
+		end
+		-- No fully clear arc: still aim at the target rather than leave the shot unaimed.
+		if not calc and fallbackCalc then
+			calc, flightTime, impact = fallbackCalc, fallbackTime, fallbackImpact
 		end
 		if not calc or not flightTime then return end
 
@@ -3306,9 +3316,10 @@ run(function()
 									local maxCharge = tonumber(sourceMeta and sourceMeta.maxStrengthChargeSec)
 										or tonumber(sourceMeta and sourceMeta.maxDrawDurationSeconds)
 
-									if maxCharge then
-										args[8].drawDurationSeconds = maxCharge * math.clamp(skidChargePercent.Value / 100, 0, 1)
-									end
+									local chargeRatio = math.clamp(skidChargePercent.Value / 100, 0, 1)
+									maxCharge = maxCharge or (tostring(args[3]):find('arrow', 1, true) and 0.65 or 0.8)
+									-- Full charge sends 5 like the built-in Projectile Aimbot does.
+									args[8].drawDurationSeconds = chargeRatio >= 0.999 and math.max(maxCharge, 5) or maxCharge * chargeRatio
 								end
 							end
 							local self = ...
@@ -3357,7 +3368,7 @@ run(function()
 		Name = 'Range',
 		Min = 10,
 		Max = 500,
-		Default = 100,
+		Default = 300,
 	})
 
 	FOV = SilentAim:CreateSlider({
@@ -3365,6 +3376,15 @@ run(function()
 		Min = 1,
 		Max = 1000,
 		Default = 300,
+	})
+
+	PredictionScale = SilentAim:CreateSlider({
+		Name = 'Prediction',
+		Min = 0,
+		Max = 200,
+		Default = 100,
+		Suffix = '%',
+		Tooltip = 'How much of the target\'s movement to lead.\nLower it if you over-lead far targets that change direction.'
 	})
 
 	PingComp = SilentAim:CreateSlider({
