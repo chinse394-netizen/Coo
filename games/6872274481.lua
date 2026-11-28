@@ -578,17 +578,6 @@ local function watchTargets()
 end
 -- The aim modules call these two prediction functions. Your libraries/prediction.lua
 -- does not define them (the call was nil and the pcall around it hid the failure).
-if not prediction.GetSpawnPosition then
-	prediction.GetSpawnPosition = function(position_from, aim_point, rel_x, rel_y, rel_z)
-		if typeof(position_from) ~= 'Vector3' or typeof(aim_point) ~= 'Vector3' then
-			return position_from
-		end
-		if (aim_point - position_from).Magnitude <= 1e-6 then
-			return position_from
-		end
-		return (CFrame.new(position_from, aim_point) * CFrame.new(rel_x or 0.8, rel_y or -0.6, rel_z or 0)).Position
-	end
-end
 if not prediction.IsTrajectoryClear then
 	prediction.IsTrajectoryClear = function(from2, vel, grav, fly_t, cast, foe, ignored)
 		local ray_cast = RaycastParams.new()
@@ -2950,6 +2939,7 @@ run(function()
 	local AutoCharge
 	local skidChargePercent
 	local updateRandomizeVisibility
+	local PingComp
 	local projectileRemoteName = 'ProjectileFire'
 
 	local rayCheck = RaycastParams.new()
@@ -3172,25 +3162,25 @@ run(function()
 		local _map = workspace:FindFirstChild('Map')
 		if _map then rayCheck.FilterDescendantsInstances = {_map} end
 		local lifetime = tonumber(meta.predictionLifetimeSec) or tonumber(meta.lifetimeSec) or (projSpeed > 0 and math.min(3, 120 / projSpeed) or 3)
+		-- args[4] is already the spawn position the server simulates from (the bow offset is
+		-- applied before the remote is called), so aim straight from it.
 		local spawnPos = origin
-		local bow = bedwars.BowConstantsTable or {}
-		local rx, ry, rz = bow.RelX or 0.8, bow.RelY or -0.6, bow.RelZ or 0
-		local srcMeta = typeof(args[1]) == 'Instance' and bedwars.ItemMeta[args[1].Name]
-		local rel = srcMeta and srcMeta.projectileSource and srcMeta.projectileSource.relativeOverride
-		if type(rel) == 'table' then
-			rx, ry, rz = rel.relX or 0, rel.relY or 0, rel.relZ or 0
-		end
 		local airFlag = (plr.Humanoid and plr.Humanoid.FloorMaterial == Enum.Material.Air) or math.abs(rawVel.Y) > 0.01
+		local velUsed = _saVelHistory[_velKey] or rawVel
+		-- What we see of the target is already behind where the server has it, and the shot
+		-- also takes time to reach the server. Lead the target sideways by that amount.
+		local pingLead = 0
+		local pingOk, ping = pcall(function()
+			return lplr:GetNetworkPing()
+		end)
+		if pingOk and type(ping) == 'number' then
+			pingLead = math.clamp(ping * (PingComp.Value / 100), 0, 0.35)
+		end
+		local leadOffset = Vector3.new(velUsed.X, 0, velUsed.Z) * pingLead
 		local function aimAt(point)
-			local c1, i1, f1 = prediction.SolveTrajectory(spawnPos, projSpeed, gravity, point, _saVelHistory[_velKey] or rawVel, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, airFlag, plr.RootPart.Position, plr.RootPart, nil, true)
+			local c1, i1, f1 = prediction.SolveTrajectory(spawnPos, projSpeed, gravity, point + leadOffset, velUsed, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, airFlag, plr.RootPart.Position + leadOffset, plr.RootPart, nil, true)
 			if not c1 then return nil end
-			local s1 = prediction.GetSpawnPosition(spawnPos, c1, rx, ry, rz)
-			local c2, i2, f2 = prediction.SolveTrajectory(s1, projSpeed, gravity, point, _saVelHistory[_velKey] or rawVel, playerGravity, plr.HipHeight, plr.Jumping and 42.6 or nil, rayCheck, airFlag, plr.RootPart.Position, plr.RootPart, nil, true)
-			if c2 and f2 then
-				c1, i1, f1 = spawnPos + (c2 - s1), i2, f2
-				s1 = prediction.GetSpawnPosition(spawnPos, c1, rx, ry, rz)
-			end
-			return c1, f1, s1, i1
+			return c1, f1, spawnPos, i1
 		end
 		local headOnly = tostring(projType):lower():find('headhunter', 1, true) ~= nil
 			or (typeof(args[1]) == 'Instance' and args[1].Name:lower():find('headhunter', 1, true) ~= nil)
@@ -3317,7 +3307,7 @@ run(function()
 										or tonumber(sourceMeta and sourceMeta.maxDrawDurationSeconds)
 
 									if maxCharge then
-										args[8].drawDurationSec = maxCharge * math.clamp(skidChargePercent.Value / 100, 0, 1)
+										args[8].drawDurationSeconds = maxCharge * math.clamp(skidChargePercent.Value / 100, 0, 1)
 									end
 								end
 							end
@@ -3375,6 +3365,15 @@ run(function()
 		Min = 1,
 		Max = 1000,
 		Default = 300,
+	})
+
+	PingComp = SilentAim:CreateSlider({
+		Name = 'Ping compensation',
+		Min = 0,
+		Max = 300,
+		Default = 100,
+		Suffix = '%',
+		Tooltip = 'How much of your ping to lead moving targets by.\nRaise it if shots land behind them, lower it if they land in front.'
 	})
 
 	SAFOVCircle = SilentAim:CreateToggle({
