@@ -3309,20 +3309,7 @@ run(function()
 							local ok, newVelocity = pcall(solveSilent, args)
 							if ok and typeof(newVelocity) == 'Vector3' then
 								args[6] = newVelocity
-								if AutoCharge.Enabled and typeof(args[8]) == 'table' then
-									local sourceTool = args[1]
-									local itemMeta = sourceTool and bedwars.ItemMeta[sourceTool.Name]
-									local sourceMeta = itemMeta and itemMeta.projectileSource
-									local maxCharge = tonumber(sourceMeta and sourceMeta.maxStrengthChargeSec)
-										or tonumber(sourceMeta and sourceMeta.maxDrawDurationSeconds)
-
-									local chargeRatio = math.clamp(skidChargePercent.Value / 100, 0, 1)
-									maxCharge = maxCharge or (tostring(args[3]):find('arrow', 1, true) and 0.65 or 0.8)
-									-- Full charge sends 5 like the built-in Projectile Aimbot does.
-									local shotInfo = table.clone(args[8])
-									shotInfo.drawDurationSeconds = chargeRatio >= 0.999 and math.max(maxCharge, 5) or maxCharge * chargeRatio
-									args[8] = shotInfo
-								end
+								-- Draw time stays as the game sent it. The aerov4 SilentAim never changed it either.
 							end
 							local self = ...
 							return self.InvokeServer(self, table.unpack(args, 1, args.n))
