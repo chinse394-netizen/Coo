@@ -229,6 +229,10 @@ end
 
 local hash = loadstring(downloadFile('Coo/libraries/hash.lua'), 'hash')()
 local prediction = loadstring(downloadFile('Coo/libraries/prediction.lua'), 'prediction')()
+-- Aim library used by Bedwars SilentAim. If the file is missing, SilentAim falls back to prediction.
+local aimOk, aimlib = pcall(function()
+	return loadstring(downloadFile('Coo/libraries/aimlib.lua'), 'aimlib')()
+end)
 entitylib = loadstring(downloadFile('Coo/libraries/entity.lua'), 'entitylibrary')()
 local whitelist = {
 	alreadychecked = {},
@@ -247,6 +251,9 @@ local whitelist = {
 vape.Libraries.entity = entitylib
 vape.Libraries.whitelist = whitelist
 vape.Libraries.prediction = prediction
+if aimOk and type(aimlib) == 'table' then
+	vape.Libraries.aimlib = aimlib
+end
 vape.Libraries.hash = hash
 vape.Libraries.auraanims = {
 	Normal = {
@@ -7934,4 +7941,3 @@ run(function()
 	})
 	
 end)
-	
